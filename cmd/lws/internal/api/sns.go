@@ -7,31 +7,31 @@ import (
 
 	"github.com/cprates/lws/common"
 	"github.com/cprates/lws/pkg/lerr"
-	"github.com/cprates/lws/pkg/lsqs"
+	"github.com/cprates/lws/pkg/lsns"
 )
 
-var sqsAction = map[string]reflect.Value{}
+var snsAction = map[string]reflect.Value{}
 
-// InstallSQS installs SQS service and starts a new instance of LSqs.
-func (a AwsCli) InstallSQS() {
+// InstallSNS installs SNS service and starts a new instance of LSns.
+func (a AwsCli) InstallSNS() {
 
-	api := lsqs.New()
+	api := lsns.New()
 	lt := reflect.TypeOf(api)
 	lv := reflect.ValueOf(api)
 
 	for n := 0; n < lt.NumMethod(); n++ {
 		mt := lt.Method(n)
 		mv := lv.Method(n)
-		sqsAction[mt.Name] = mv
+		snsAction[mt.Name] = mv
 	}
 
-	a.regService("sqs", sqsDispatcher)
+	a.regService("sns", snsDispatcher)
 }
 
-func sqsDispatcher(ctx context.Context, reqID string, params url.Values) (res *common.Result) {
+func snsDispatcher(ctx context.Context, reqID string, params url.Values) (res *common.Result) {
 
 	action := params.Get("Action")
-	actionM, ok := sqsAction[action]
+	actionM, ok := snsAction[action]
 	if !ok {
 		msg := "Not implemented or unknown action " + action
 		res = &common.Result{

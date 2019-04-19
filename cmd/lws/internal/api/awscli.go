@@ -1,109 +1,128 @@
 package api
 
 import (
-	"encoding/xml"
-	"fmt"
+	"context"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/url"
+	"strings"
+
+	"github.com/google/uuid"
+	log "github.com/sirupsen/logrus"
+
+	"github.com/cprates/lws/common"
 )
 
+// AwsCli represents an instance of an AWS CLI compatible interface.
 type AwsCli struct {
-	actions map[string]actionFunc
+	services map[string]dispatchFunc
 }
 
-type actionFunc func(params url.Values, method string) error
+type dispatchFunc func(ctx context.Context, reqID string, params url.Values) *common.Result
 
+// NewAwsCli creates a new empty AWS CLI compatible interface to serve HTTP requests.
 func NewAwsCli() AwsCli {
 	return AwsCli{
-		actions: map[string]actionFunc{},
+		services: map[string]dispatchFunc{},
 	}
 }
 
-func (a AwsCli) regAction(id string, f actionFunc) AwsCli {
+func (a AwsCli) regService(id string, f dispatchFunc) AwsCli {
 
-	a.actions[id] = f
+	a.services[id] = f
 	return a
 }
 
-// TODO: this must go to a aws related folder. Server has nothig to do with this checks aws related. We might have
-// other endpoints with other functionality like admin stuff:
-// pkg/cli/dispatcher.go
-// pkg/cli/errcom.go
-// pkg/cli/sqs.go
+// service tries to get the service name from the Authorization info. The service name
+// is usually in the URL host name, but that's not true if setting a custom endpoint to be
+// used by multiple different services. As a workaround it gets it from the Authorization info
+// from the Authorization header, query string or POST body, according to
+// https://docs.aws.amazon.com/general/latest/gr/sigv4-signed-request-examples.html#sig-v4-examples-get-query-string
+// TODO: should find a better way. DNS doesn't seem the way to go though (affects entire machine)
+func service(params url.Values, headers http.Header) string {
+
+	var auth string
+	if a, ok := headers["Authorization"]; ok {
+		auth = a[0]
+	} else if a, ok := params["Authorization"]; ok {
+		auth = a[0]
+	}
+
+	var service string
+	parts := strings.Split(auth, ",")
+	for _, p := range parts {
+		if s := strings.Split(p, "/"); len(s) == 5 {
+			service = s[3]
+		}
+	}
+
+	return service
+}
+
+// Dispatcher returns a function to dispatch requests to the correct endpoints
+// based on the Action parameter.
+// TODO: check api version?
 func (a AwsCli) Dispatcher() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		u, err := uuid.NewRandom()
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			log.Errorln("Unexpected error", err)
+			return
+		}
+		reqID := u.String()
 
-		// TODO: debug
-		fmt.Println("URI:", r.RequestURI)
-		fmt.Println("URL:", r.URL)
-		fmt.Println("Method:", r.Method)
+		log.Debugf("Req %s %q, %s", r.Method, r.RequestURI, reqID)
+
+		w.Header().Add("Content-Type", "application/xml")
 
 		body, err := ioutil.ReadAll(r.Body)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			log.Println("Failed to read body,", err)
+			log.Errorln("Failed to read body,", reqID, err)
 			return
 		}
 
-		// TODO: debug
-		log.Println(string(body))
+		var params url.Values
+		switch r.Method {
+		case http.MethodPost:
+			b := string(body)
+			log.Debugf("Req %s, body: %q", reqID, b)
+			params, err = url.ParseQuery(b)
+		case http.MethodGet:
+			params = r.URL.Query()
+		}
 
-		params, err := url.ParseQuery(string(body))
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			log.Println("Failed to read query params,", err)
+			log.Errorln("Failed to read query params,", reqID, err)
 			return
 		}
 
-		id := params.Get("Action")
-		if id == "" {
-			//w.WriteHeader(http.StatusBadRequest)
-			// TODO: try to call the real aws endpoint to check the response
-			//w.Write([]byte("'Action' not specified"))
-			log.Println("Query param Action not specified")
-			onError(w, 400, "")
+		service := service(params, r.Header)
+		if service == "" {
+			log.Errorln("Authorization info not present or invalid,", reqID)
+			onAccessDenied(w, "http://"+r.Host, reqID)
 			return
 		}
 
-		actionF, ok := a.actions[id]
+		if id := params.Get("Action"); id == "" {
+			log.Errorln("Action not specified,", reqID)
+			onMissingAction(w, reqID)
+			return
+		}
+
+		dispatchF, ok := a.services[service]
 		if !ok {
-			//w.WriteHeader(http.StatusBadRequest)
-			//w.Write([]byte("unknown Action: " + id))
-			log.Println("Unknown Action:", id)
-			onError(w, http.StatusBadRequest, "unknown Action "+id)
+			log.Errorf("Unknown Service %q, %s", service, reqID)
+			onInvalidParameterValue(w, service, reqID)
 			return
 		}
 
-		err = actionF(params, r.Method)
-		if err != nil {
-			log.Println("Failed serving req XXX,", err) // TODO: add req ID for all errors, and retur it in the message
-			onError(w, http.StatusBadRequest, err.Error())
+		res := dispatchF(context.Background(), reqID, params)
+		if res.Status != 200 {
+			log.Errorln("Failed serving req", reqID, res.Err)
+			onLwsErr(w, res)
 		}
-	}
-}
-
-type ErrorResult struct {
-	Code      string `xml:"Code,omitempty"`
-	Message   string `xml:"Message,omitempty"`
-	RequestId string `xml:"RequestId,omitempty"`
-	Type      string `xml:"Type,omitempty"`
-}
-
-type ErrorResponse struct {
-	Result ErrorResult `xml:"Error"`
-}
-
-// TODO
-// Make a list of common errors to use directly
-func onError(w http.ResponseWriter, status int, err string) {
-	respStruct := ErrorResponse{ErrorResult{Type: "GeneralError", Code: "AWS.SimpleQueueService.GeneralError", Message: err, RequestId: "00000000-0000-0000-0000-000000000000"}}
-
-	w.WriteHeader(status)
-	enc := xml.NewEncoder(w)
-	enc.Indent("  ", "    ")
-	if err := enc.Encode(respStruct); err != nil {
-		log.Printf("error: %v\n", err)
 	}
 }
