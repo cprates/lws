@@ -10,7 +10,6 @@ for pkg in $(go list ./...); do
     golint "$pkg"
     [ $? -ne 0 ] && st=1
 
-    # gofmt works on files, not packages
     go fmt "$pkg"
     [ $? -ne 0 ] && st=1
 done

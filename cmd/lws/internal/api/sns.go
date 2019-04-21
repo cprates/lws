@@ -2,20 +2,22 @@ package api
 
 import (
 	"context"
-	"net/url"
 	"reflect"
 
+	log "github.com/sirupsen/logrus"
+
 	"github.com/cprates/lws/common"
-	"github.com/cprates/lws/pkg/lerr"
 	"github.com/cprates/lws/pkg/lsns"
 )
 
 var snsAction = map[string]reflect.Value{}
 
 // InstallSNS installs SNS service and starts a new instance of LSns.
-func (a AwsCli) InstallSNS() {
+func (a AwsCli) InstallSNS(region, accountID, scheme, host string) {
 
-	api := lsns.New()
+	log.Println("Installing SNS service")
+
+	api := lsns.New(region, accountID, scheme, host)
 	lt := reflect.TypeOf(api)
 	lv := reflect.ValueOf(api)
 
@@ -28,24 +30,13 @@ func (a AwsCli) InstallSNS() {
 	a.regService("sns", snsDispatcher)
 }
 
-func snsDispatcher(ctx context.Context, reqID string, params url.Values) (res *common.Result) {
+func snsDispatcher(ctx context.Context, reqID string, params map[string]string) common.Result {
 
-	action := params.Get("Action")
+	action := params["Action"]
 	actionM, ok := snsAction[action]
 	if !ok {
 		msg := "Not implemented or unknown action " + action
-		res = &common.Result{
-			Status: 400,
-			Err: lerr.Result{
-				Result: lerr.Details{
-					Type:      "Sender",
-					Code:      "InvalidAction",
-					Message:   msg,
-					RequestID: reqID,
-				},
-			},
-		}
-		return
+		return common.ErrInvalidActionRes(msg, reqID)
 	}
 
 	input := []reflect.Value{
@@ -54,9 +45,5 @@ func snsDispatcher(ctx context.Context, reqID string, params url.Values) (res *c
 	}
 
 	rv := actionM.Call(input)
-	r := rv[0].Interface().(common.Result)
-	r.Err.Result.RequestID = reqID
-	res = &r
-
-	return
+	return rv[0].Interface().(common.Result)
 }

@@ -2,39 +2,54 @@ package lsns
 
 import (
 	"context"
+	"encoding/xml"
 
 	"github.com/cprates/lws/common"
-	"github.com/cprates/lws/pkg/lerr"
 )
 
 // API is the receiver for all LSns API methods.
 type API struct {
-	controller lSns
-}
-
-var resNotImplemented = common.Result{
-	Status: 400,
-	Err: lerr.Result{
-		// note the absence of a request ID - it is set by the caller
-		Result: lerr.Details{
-			Type:    "Sender",
-			Code:    "InvalidAction",
-			Message: "not implemented",
-		},
-	},
+	controller LSns
+	pushC      chan request
 }
 
 // New creates an LSns instance.
-func New() *API {
-	return &API{}
+func New(region, accountID, scheme, host string) *API {
+	ctl := &lSns{
+		accountID: accountID,
+		region:    region,
+		scheme:    scheme,
+		host:      host,
+	}
+	pushC := make(chan request)
+	go ctl.Process(pushC)
+
+	return &API{
+		controller: ctl,
+		pushC:      pushC,
+	}
+}
+
+func (a API) pushReq(action, reqID string, data map[string]string) common.Result {
+
+	rq := newReq(action, reqID, data)
+	a.pushC <- rq
+	r := <-rq.resC
+
+	buf, err := xml.Marshal(r)
+	if err != nil {
+		return common.ErrInternalErrorRes(err.Error(), reqID)
+	}
+
+	return common.SuccessRes(buf, reqID)
 }
 
 //a.regAction("AddPermission", notImplemented).
 //	regAction("CheckIfPhoneNumberIsOptedOut", notImplemented).
 //	regAction("ConfirmSubscription", notImplemented).
-//	regAction("CreatePlatformApplication", createQueue).
+//	regAction("CreatePlatformApplication", notImplemented).
 //	regAction("CreatePlatformEndpoint", notImplemented).
-//	regAction("CreateTopic", notImplemented).
+//*	regAction("CreateTopic", notImplemented).
 //	regAction("DeleteEndpoint", notImplemented).
 //	regAction("DeletePlatformApplication", notImplemented).
 //	regAction("DeleteTopic", notImplemented).
@@ -60,7 +75,14 @@ func New() *API {
 //	regAction("Subscribe", notImplemented).
 //	regAction("Unsubscribe", notImplemented)
 
-// CreateTopic creates a new queue.
-func (a API) CreateTopic(ctx context.Context, params map[string][]string) common.Result {
-	return resNotImplemented
+// CreateTopic creates a new topic.
+func (a API) CreateTopic(ctx context.Context, params map[string]string) common.Result {
+
+	reqID := "REQ-NOT-PRESENT" // TODO
+
+	if _, present := params["Name"]; !present {
+		return common.MissingParamRes("TopicName is a required parameter", reqID)
+	}
+
+	return a.pushReq("CreateTopic", reqID, params)
 }

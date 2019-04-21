@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -18,7 +19,7 @@ type AwsCli struct {
 	services map[string]dispatchFunc
 }
 
-type dispatchFunc func(ctx context.Context, reqID string, params url.Values) *common.Result
+type dispatchFunc func(ctx context.Context, reqID string, params map[string]string) common.Result
 
 // NewAwsCli creates a new empty AWS CLI compatible interface to serve HTTP requests.
 func NewAwsCli() AwsCli {
@@ -119,10 +120,66 @@ func (a AwsCli) Dispatcher() http.HandlerFunc {
 			return
 		}
 
-		res := dispatchF(context.Background(), reqID, params)
+		ctx := context.WithValue(context.Background(), common.ReqIDKey{}, reqID)
+		res := dispatchF(ctx, reqID, flattAndParse(params))
 		if res.Status != 200 {
 			log.Errorln("Failed serving req", reqID, res.Err)
 			onLwsErr(w, res)
+			return
+		}
+
+		w.WriteHeader(200)
+		_, err = w.Write(res.Result)
+		if err != nil {
+			log.Errorln("Unexpected error, request", reqID, err)
 		}
 	}
+}
+
+// flattAndParse flatten the given map, and parse attributes, converting them into key
+// pair elements.
+func flattAndParse(params map[string][]string) (res map[string]string) {
+
+	res = map[string]string{}
+
+	for k, v := range params {
+		if !isAttr("Name", k) {
+			if !isAttr("Value", k) {
+				res[k] = v[0]
+			}
+			continue
+		}
+
+		// has pair?
+		parts := strings.Split(k, ".")
+		attrValKey := "Attribute." + parts[1] + ".Value"
+		attrVal, ok := params[attrValKey]
+		if !ok {
+			continue
+		}
+
+		res[v[0]] = attrVal[0]
+	}
+
+	return
+}
+
+func isAttr(t, v string) bool {
+
+	if !strings.HasPrefix(v, "Attribute.") {
+		return false
+	}
+	if !strings.HasSuffix(v, "."+t) {
+		return false
+	}
+
+	parts := strings.Split(v, ".")
+	if len(parts) > 3 {
+		return false
+	}
+	if _, err := strconv.Atoi(parts[1]); err != nil {
+		return false
+	}
+
+	return true
 }

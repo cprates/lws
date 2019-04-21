@@ -25,11 +25,11 @@ func onAccessDenied(w http.ResponseWriter, res, reqID string) {
 	writeErr(w, http.StatusForbidden, err)
 }
 
-func onLwsErr(w http.ResponseWriter, e *common.Result) {
+func onLwsErr(w http.ResponseWriter, r common.Result) {
 
-	w.WriteHeader(e.Status)
+	w.WriteHeader(r.Status)
 	enc := xml.NewEncoder(w)
-	if err := enc.Encode(e.Err); err != nil {
+	if err := enc.Encode(r.Err); err != nil {
 		log.Errorln("Unexpected error encoding error message,", err)
 	}
 }
