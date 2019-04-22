@@ -1,0 +1,8 @@
+language: go
+
+go_import_path: github.com/cprates/lws
+
+go:
+  - 1.12.2
+  
+script: make deploy
