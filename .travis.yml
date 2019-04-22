@@ -10,5 +10,8 @@ go_import_path: github.com/cprates/lws
 
 go:
   - 1.12.2
-  
+
+install:
+  - go get -u golang.org/x/lint/golint
+
 script: make deploy
