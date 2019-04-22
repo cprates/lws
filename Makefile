@@ -5,7 +5,7 @@ build:
 deploy: fmt build test
 
 fmt:
-	./build.sh
+	./check.sh
 
 install:
 	go install ./cmd/lws
