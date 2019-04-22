@@ -11,8 +11,8 @@ type Result struct {
 	Err    *lerr.Result
 }
 
-// MissingParamRes is for generating AWS compatible MissingParameter error.
-func MissingParamRes(msg, reqID string) Result {
+// ErrMissingParamRes is for generating AWS compatible MissingParameter error.
+func ErrMissingParamRes(msg, reqID string) Result {
 	return Result{
 		Status: 400,
 		Err: &lerr.Result{

@@ -42,6 +42,8 @@ type request struct {
 var (
 	// ErrAlreadyExists maps to QueueAlreadyExists
 	ErrAlreadyExists = errors.New("already exists")
+	// ErrNonExistentQueue maps to NonExistentQueue
+	ErrNonExistentQueue = errors.New("non existent queue")
 )
 
 // TODO: doc
@@ -56,6 +58,8 @@ func (l *lSqs) Process(reqC chan request) {
 			l.listQueues(ac)
 		case "DeleteQueue":
 			l.deleteQueue(ac)
+		case "GetQueueUrl":
+			l.getQueueURL(ac)
 		}
 	}
 
@@ -89,29 +93,6 @@ func (l *lSqs) createQueue(req request) {
 	req.resC <- &reqResult{data: url}
 }
 
-func (l *lSqs) listQueues(req request) {
-
-	prefix := req.params["QueueNamePrefix"]
-
-	log.Debugf("Listing queues for prefix %q", prefix)
-
-	var urls []string
-	var count int
-	for _, q := range l.queues {
-		// limit applied by AWS
-		if count >= 1000 {
-			break
-		}
-
-		if strings.HasPrefix(q.name, prefix) {
-			urls = append(urls, q.url)
-			count++
-		}
-	}
-
-	req.resC <- &reqResult{data: urls}
-}
-
 // at the time of writing this method, the AWS doc states that if deleting an non-existing
 // queue, no error is returned, but testing with the aws-cli it returns an
 // 'AWS.SimpleQueueService.NonExistentQueue'.
@@ -133,13 +114,43 @@ func (l *lSqs) deleteQueue(req request) {
 	req.resC <- &reqResult{}
 }
 
-func newReq(action, reqID string, params map[string]string) request {
-	return request{
-		action: action,
-		id:     reqID,
-		params: params,
-		resC:   make(chan *reqResult),
+func (l *lSqs) getQueueURL(req request) {
+
+	queueName := req.params["QueueName"]
+
+	log.Debugln("Getting URL for queue", queueName)
+
+	for name, q := range l.queues {
+		if name == queueName {
+			req.resC <- &reqResult{data: q.url}
+			return
+		}
 	}
+
+	req.resC <- &reqResult{err: ErrNonExistentQueue}
+}
+
+func (l *lSqs) listQueues(req request) {
+
+	prefix := req.params["QueueNamePrefix"]
+
+	log.Debugf("Listing queues for prefix %q", prefix)
+
+	var urls []string
+	var count int
+	for _, q := range l.queues {
+		// limit applied by AWS
+		if count >= 1000 {
+			break
+		}
+
+		if strings.HasPrefix(q.name, prefix) {
+			urls = append(urls, q.url)
+			count++
+		}
+	}
+
+	req.resC <- &reqResult{data: urls}
 }
 
 // configDiff compares the current attributes with the new ones provided returning a list with

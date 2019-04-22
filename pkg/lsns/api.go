@@ -81,7 +81,7 @@ func (a API) CreateTopic(ctx context.Context, params map[string]string) common.R
 	reqID := "REQ-NOT-PRESENT" // TODO
 
 	if _, present := params["Name"]; !present {
-		return common.MissingParamRes("TopicName is a required parameter", reqID)
+		return common.ErrMissingParamRes("TopicName is a required parameter", reqID)
 	}
 
 	return a.pushReq("CreateTopic", reqID, params)

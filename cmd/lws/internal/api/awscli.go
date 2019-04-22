@@ -103,7 +103,7 @@ func (a AwsCli) Dispatcher() http.HandlerFunc {
 		service := service(params, r.Header)
 		if service == "" {
 			log.Errorln("Authorization info not present or invalid,", reqID)
-			onAccessDenied(w, "http://"+r.Host, reqID)
+			onAccessDenied(w, "http://"+r.Host, reqID) //  TODO: the schema should come from config
 			return
 		}
 
