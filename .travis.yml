@@ -1,15 +1,18 @@
 language: go
 
+go_import_path: github.com/cprates/lws
+
 notifications:
   email: false
 
 env:
   - GO111MODULE=on
 
-go_import_path: github.com/cprates/lws
+os:
+  - linux
 
 go:
-  - 1.12.2
+  - 1.12.x
 
 install:
   - go get -u golang.org/x/lint/golint

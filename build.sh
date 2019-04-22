@@ -8,7 +8,6 @@ for pkg in $(go list ./...); do
     [ $? -ne 0 ] && st=1
 
     golint "$pkg"
-    [ $? -ne 0 ] && st=1
 
     go fmt "$pkg"
     [ $? -ne 0 ] && st=1
