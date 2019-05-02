@@ -1,8 +1,6 @@
 package api
 
-import (
-	"testing"
-)
+import "testing"
 
 func TestParamsNormaliser(t *testing.T) {
 

@@ -71,6 +71,21 @@ func ErrInvalidActionRes(msg, reqID string) Result {
 	}
 }
 
+// ErrInvalidParameterValueRes generates an InvalidParameterValue error.
+func ErrInvalidParameterValueRes(msg, reqID string) Result {
+	return Result{
+		Status: 400,
+		Err: &lerr.Result{
+			Result: lerr.Details{
+				Type:      "Sender",
+				Code:      "InvalidParameterValue",
+				Message:   msg,
+				RequestID: reqID,
+			},
+		},
+	}
+}
+
 // SuccessRes is for make our life easier when generating a success result.
 func SuccessRes(res []byte, reqID string) Result {
 	return Result{

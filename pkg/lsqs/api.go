@@ -63,6 +63,8 @@ func (a API) CreateQueue(ctx context.Context, params map[string]string) common.R
 		case ErrAlreadyExists:
 			msg := "A queue already exists with the same name and a different value for attribute(s) " + res.errData.(string)
 			return ErrQueueAlreadyExistsRes(msg, reqID)
+		case ErrInvalidParameterValue:
+			return common.ErrInvalidParameterValueRes(res.errData.(string), reqID)
 		default:
 			return common.ErrInternalErrorRes(res.err.Error(), reqID)
 		}

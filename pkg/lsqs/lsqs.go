@@ -1,11 +1,14 @@
 package lsqs
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 
 	log "github.com/sirupsen/logrus"
+
+	"github.com/cprates/lws/pkg/params"
 )
 
 // LSqs is the interface to implement if you want to implement your own SQS service.
@@ -26,7 +29,7 @@ type lSqs struct {
 type reqResult struct {
 	data interface{}
 	err  error
-	// extra data to be used by some errors
+	// extra data to be used by some errors like custom messages
 	errData interface{}
 }
 
@@ -44,26 +47,74 @@ var (
 	ErrAlreadyExists = errors.New("already exists")
 	// ErrNonExistentQueue maps to NonExistentQueue
 	ErrNonExistentQueue = errors.New("non existent queue")
+	// ErrInvalidParameterValue maps to InvalidAttributeValue
+	ErrInvalidParameterValue = errors.New("invalid parameter value")
 )
 
 // TODO: doc
 func (l *lSqs) Process(reqC chan request) {
 
 	// TODO: add a default to return the not implemented
-	for ac := range reqC {
-		switch ac.action {
+	for req := range reqC {
+		switch req.action {
 		case "CreateQueue":
-			l.createQueue(ac)
+			l.createQueue(req)
 		case "ListQueues":
-			l.listQueues(ac)
+			l.listQueues(req)
 		case "DeleteQueue":
-			l.deleteQueue(ac)
+			l.deleteQueue(req)
 		case "GetQueueUrl":
-			l.getQueueURL(ac)
+			l.getQueueURL(req)
 		}
 	}
 
 	log.Println("Shutting down LSQS...")
+}
+
+func validateRedrivePolicy(
+	val string,
+	queues map[string]*queue,
+) (
+	dlta string,
+	mrc uint32,
+	err error,
+) {
+
+	tmp := struct {
+		DeadLetterTargetArn string
+		MaxReceiveCount     string
+	}{}
+
+	err = json.Unmarshal([]byte(val), &tmp)
+	if err != nil {
+		return
+	}
+
+	mrc, err = params.ValUI32(
+		"MaxReceiveCount",
+		0,
+		0,
+		1000000,
+		map[string]string{"MaxReceiveCount": tmp.MaxReceiveCount},
+	)
+	if err != nil {
+		return
+	}
+
+	if queueByArn(tmp.DeadLetterTargetArn, queues) == nil {
+		err = fmt.Errorf(
+			"value %s for parameter RedrivePolicy is invalid. Reason: Dead letter target does not exist",
+			val,
+		)
+		log.Debugln(err)
+		return
+	}
+
+	// the arn will need to match an existing queue arn so, no need to check its structure.
+	// On the original service it's no possible to use a dead-letter queue in a different region
+	// account as the source but, this project doesn't care much about that, at least for now
+	dlta = tmp.DeadLetterTargetArn
+	return
 }
 
 func (l *lSqs) createQueue(req request) {
@@ -87,6 +138,83 @@ func (l *lSqs) createQueue(req request) {
 			return
 		}
 	}
+
+	// set properties
+	delaySeconds, err := params.ValUI32("DelaySeconds", 0, 0, 900, req.params)
+	if err != nil {
+		log.Debugln(err)
+		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
+		return
+	}
+	q.delaySeconds = delaySeconds
+
+	maximumMessageSize, err := params.ValUI32("MaximumMessageSize", 262144, 1024, 262144, req.params)
+	if err != nil {
+		log.Debugln(err)
+		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
+		return
+	}
+	q.maximumMessageSize = maximumMessageSize
+
+	messageRetentionPeriod, err := params.ValUI32(
+		"MessageRetentionPeriod", 345600, 60, 1209600, req.params,
+	)
+	if err != nil {
+		log.Debugln(err)
+		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
+		return
+	}
+	q.messageRetentionPeriod = messageRetentionPeriod
+
+	receiveMessageWaitTimeSeconds, err := params.ValUI32(
+		"ReceiveMessageWaitTimeSeconds", 0, 0, 20, req.params,
+	)
+	if err != nil {
+		log.Debugln(err)
+		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
+		return
+	}
+	q.receiveMessageWaitTimeSeconds = receiveMessageWaitTimeSeconds
+
+	var dlta string
+	var mrc uint32
+	if p := params.ValString("RedrivePolicy", req.params); p != "" {
+		dlta, mrc, err = validateRedrivePolicy(p, l.queues)
+		if err != nil {
+			log.Debugln(err)
+			req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
+			return
+		}
+
+		// TODO: add the src arn to the dead-letter to link them in both ways. Not sure if this
+		// is really need tbh
+	}
+	q.deadLetterTargetArn = dlta
+	q.maxReceiveCount = mrc
+
+	visibilityTimeout, err := params.ValUI32("VisibilityTimeout", 30, 0, 43200, req.params)
+	if err != nil {
+		log.Debugln(err)
+		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
+		return
+	}
+	q.visibilityTimeout = visibilityTimeout
+
+	fifoQueue, err := params.ValBool("FifoQueue", false, req.params)
+	if err != nil {
+		log.Debugln(err)
+		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
+		return
+	}
+	q.fifoQueue = fifoQueue
+
+	contentBasedDeduplication, err := params.ValBool("ContentBasedDeduplication", false, req.params)
+	if err != nil {
+		log.Debugln(err)
+		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
+		return
+	}
+	q.contentBasedDeduplication = contentBasedDeduplication
 
 	l.queues[name] = q
 
@@ -151,6 +279,17 @@ func (l *lSqs) listQueues(req request) {
 	}
 
 	req.resC <- &reqResult{data: urls}
+}
+
+func queueByArn(arn string, queues map[string]*queue) *queue {
+
+	for _, q := range queues {
+		if arn == q.lrn {
+			return q
+		}
+	}
+
+	return nil
 }
 
 // configDiff compares the current attributes with the new ones provided returning a list with

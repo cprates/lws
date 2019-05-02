@@ -123,7 +123,7 @@ func (a AwsCli) Dispatcher() http.HandlerFunc {
 		ctx := context.WithValue(context.Background(), common.ReqIDKey{}, reqID)
 		res := dispatchF(ctx, reqID, flattAndParse(params))
 		if res.Status != 200 {
-			log.Errorln("Failed serving req", reqID, res.Err)
+			log.Debugln("Failed serving req", reqID, res.Err)
 			onLwsErr(w, res)
 			return
 		}
