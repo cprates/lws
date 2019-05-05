@@ -239,3 +239,40 @@ func (a API) ListQueues(ctx context.Context, params map[string]string) common.Re
 
 	return common.SuccessRes(buf, reqID)
 }
+
+// SetQueueAttributes sets the given attributes to in the specified queue.
+func (a API) SetQueueAttributes(ctx context.Context, params map[string]string) common.Result {
+
+	reqID := ctx.Value(common.ReqIDKey{}).(string)
+
+	if _, present := params["QueueUrl"]; !present {
+		return common.ErrMissingParamRes("QueueUrl is a required parameter", reqID)
+	}
+
+	res := a.pushReq("SetQueueAttributes", reqID, params)
+	if res.err != nil {
+		switch res.err {
+		case ErrInvalidAttributeName:
+			return common.ErrInvalidAttributeNameRes(res.errData.(string), reqID)
+		case ErrInvalidParameterValue:
+			return common.ErrInvalidParameterValueRes(res.errData.(string), reqID)
+		default:
+			return common.ErrInternalErrorRes(res.err.Error(), reqID)
+		}
+	}
+
+	xmlData := struct {
+		XMLName          xml.Name `xml:"SetQueueAttributesResponse"`
+		ResponseMetadata struct {
+			RequestID string `xml:"RequestId"`
+		}
+	}{}
+	xmlData.ResponseMetadata.RequestID = reqID
+
+	buf, err := xml.Marshal(xmlData)
+	if err != nil {
+		return common.ErrInternalErrorRes(err.Error(), reqID)
+	}
+
+	return common.SuccessRes(buf, reqID)
+}

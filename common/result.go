@@ -71,6 +71,21 @@ func ErrInvalidActionRes(msg, reqID string) Result {
 	}
 }
 
+// ErrInvalidAttributeNameRes generates an InvalidAttributeName error.
+func ErrInvalidAttributeNameRes(msg, reqID string) Result {
+	return Result{
+		Status: 400,
+		Err: &lerr.Result{
+			Result: lerr.Details{
+				Type:      "Sender",
+				Code:      "InvalidAttributeName",
+				Message:   msg,
+				RequestID: reqID,
+			},
+		},
+	}
+}
+
 // ErrInvalidParameterValueRes generates an InvalidParameterValue error.
 func ErrInvalidParameterValueRes(msg, reqID string) Result {
 	return Result{

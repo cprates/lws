@@ -51,6 +51,8 @@ var (
 	ErrNonExistentQueue = errors.New("non existent queue")
 	// ErrInvalidParameterValue maps to InvalidAttributeValue
 	ErrInvalidParameterValue = errors.New("invalid parameter value")
+	// ErrInvalidAttributeName maps to InvalidAttributeName
+	ErrInvalidAttributeName = errors.New("invalid attribute name")
 )
 
 // TODO: doc
@@ -70,6 +72,8 @@ func (l *lSqs) Process(reqC chan request) {
 			l.getQueueAttributes(req)
 		case "GetQueueUrl":
 			l.getQueueURL(req)
+		case "SetQueueAttributes":
+			l.setQueueAttributes(req)
 		}
 	}
 
@@ -263,7 +267,6 @@ func (l *lSqs) getQueueAttributes(req request) {
 	}
 
 	var toGet []string
-
 	if _, all := req.params["All"]; all {
 		toGet = []string{
 			"ApproximateNumberOfMessages", "ApproximateNumberOfMessagesDelayed",
@@ -357,6 +360,92 @@ func (l *lSqs) listQueues(req request) {
 	}
 
 	req.resC <- &reqResult{data: urls}
+}
+
+func (l *lSqs) setQueueAttributes(req request) {
+
+	queueURL := req.params["QueueUrl"]
+
+	log.Debugln("Setting Attributes for queue", queueURL)
+
+	var q *queue
+	if q = queueByURL(queueURL, l.queues); q == nil {
+		req.resC <- &reqResult{err: ErrNonExistentQueue}
+		return
+	}
+
+	// TODO: separate attrs from params to fix this mess...
+	delete(req.params, "QueueUrl")
+	delete(req.params, "Action")
+	delete(req.params, "Version")
+	var err error
+	for attr, val := range req.params {
+		switch attr {
+		case "DelaySeconds":
+			delaySeconds, e := params.UI32(val, 0, 900)
+			if e != nil {
+				err = fmt.Errorf("%s %s", e, attr)
+				break
+			}
+			q.delaySeconds = delaySeconds
+		case "MaximumMessageSize":
+			maximumMessageSize, e := params.UI32(val, 1024, 262144)
+			if e != nil {
+				err = fmt.Errorf("%s %s", e, attr)
+				break
+			}
+			q.maximumMessageSize = maximumMessageSize
+		case "MessageRetentionPeriod":
+			messageRetentionPeriod, e := params.UI32(val, 60, 1209600)
+			if e != nil {
+				err = fmt.Errorf("%s %s", e, attr)
+				break
+			}
+			q.messageRetentionPeriod = messageRetentionPeriod
+		case "Policy":
+		case "ReceiveMessageWaitTimeSeconds":
+			receiveMessageWaitTimeSeconds, e := params.UI32(val, 0, 20)
+			if e != nil {
+				err = fmt.Errorf("%s %s", e, attr)
+				break
+			}
+			q.receiveMessageWaitTimeSeconds = receiveMessageWaitTimeSeconds
+		case "RedrivePolicy":
+			dlta, mrc, e := validateRedrivePolicy(val, l.queues)
+			if e != nil {
+				err = e
+				break
+			}
+			q.deadLetterTargetArn = dlta
+			q.maxReceiveCount = mrc
+		case "VisibilityTimeout":
+			visibilityTimeout, e := params.UI32(val, 0, 43200)
+			if e != nil {
+				err = fmt.Errorf("%s %s", e, attr)
+				break
+			}
+			q.visibilityTimeout = visibilityTimeout
+		case "KmsMasterKeyId":
+		case "KmsDataKeyReusePeriodSeconds":
+		case "ContentBasedDeduplication":
+		// TODO
+		default:
+			log.Debugln("Unknown attribute", attr)
+			req.resC <- &reqResult{
+				err:     ErrInvalidAttributeName,
+				errData: "Unknown Attribute " + attr,
+			}
+			return
+		}
+
+		if err != nil {
+			log.Debugln(err)
+			req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
+			return
+		}
+	}
+
+	req.resC <- &reqResult{}
 }
 
 func queueByArn(arn string, queues map[string]*queue) *queue {

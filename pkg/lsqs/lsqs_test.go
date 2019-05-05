@@ -320,3 +320,260 @@ func TestGetQueueAttributes(t *testing.T) {
 		}
 	}
 }
+
+// Tests SetQueueAttributes action.
+func TestSetQueueAttributes(t *testing.T) {
+
+	ctl := &lSqs{
+		accountID: "0000000000",
+		region:    "dummy-region",
+		scheme:    "http",
+		host:      "localhost:1234",
+		queues:    map[string]*queue{},
+	}
+
+	req := newReq("CreateQueue", "b", map[string]string{"QueueName": "deatletter"})
+	go func() {
+		ctl.createQueue(req)
+	}()
+	<-req.resC
+	dlq := queueByName("deatletter", ctl.queues)
+
+	req = newReq(
+		"CreateQueue",
+		"a",
+		map[string]string{"QueueName": "queue1"},
+	)
+	go func() {
+		ctl.createQueue(req)
+	}()
+	<-req.resC
+
+	q := queueByName("queue1", ctl.queues)
+
+	testsSet := []struct {
+		description   string
+		qName         string
+		params        map[string]string
+		expectedAttrs *queue
+		expectedErr   error
+	}{
+		{
+			"Sets all supported attributes",
+			"queue1",
+			map[string]string{
+				"QueueUrl":                      q.url,
+				"DelaySeconds":                  "900",
+				"MaximumMessageSize":            "262144",
+				"MessageRetentionPeriod":        "1209600",
+				"ReceiveMessageWaitTimeSeconds": "20",
+				"RedrivePolicy":                 `{"DeadLetterTargetArn":"` + dlq.lrn + `","MaxReceiveCount":"1000"}`,
+				"VisibilityTimeout":             "43200",
+			},
+			&queue{
+				delaySeconds:                  900,
+				maximumMessageSize:            262144,
+				messageRetentionPeriod:        1209600,
+				receiveMessageWaitTimeSeconds: 20,
+				deadLetterTargetArn:           dlq.lrn,
+				maxReceiveCount:               1000,
+				visibilityTimeout:             43200,
+			},
+			nil,
+		},
+		{
+			"Sets attributes of an non-existing queue",
+			"queue1",
+			map[string]string{
+				"QueueUrl":     "abc",
+				"DelaySeconds": "0",
+			},
+			nil,
+			ErrNonExistentQueue,
+		},
+		{
+			"Tests upper limit for DelaySeconds",
+			"queue1",
+			map[string]string{
+				"QueueUrl":     q.url,
+				"DelaySeconds": "901",
+			},
+			nil,
+			ErrInvalidParameterValue,
+		},
+		{
+			"Tests lower limit for MaximumMessageSize",
+			"queue1",
+			map[string]string{
+				"QueueUrl":           q.url,
+				"MaximumMessageSize": "1023",
+			},
+			nil,
+			ErrInvalidParameterValue,
+		},
+		{
+			"Tests upper limit for MaximumMessageSize",
+			"queue1",
+			map[string]string{
+				"QueueUrl":           q.url,
+				"MaximumMessageSize": "262145",
+			},
+			nil,
+			ErrInvalidParameterValue,
+		},
+		{
+			"Tests lower limit for MessageRetentionPeriod",
+			"queue1",
+			map[string]string{
+				"QueueUrl":               q.url,
+				"MessageRetentionPeriod": "59",
+			},
+			nil,
+			ErrInvalidParameterValue,
+		},
+		{
+			"Tests upper limit for MessageRetentionPeriod",
+			"queue1",
+			map[string]string{
+				"QueueUrl":               q.url,
+				"MessageRetentionPeriod": "1209601",
+			},
+			nil,
+			ErrInvalidParameterValue,
+		},
+		{
+			"Tests upper limit for ReceiveMessageWaitTimeSeconds",
+			"queue1",
+			map[string]string{
+				"QueueUrl":                      q.url,
+				"ReceiveMessageWaitTimeSeconds": "21",
+			},
+			nil,
+			ErrInvalidParameterValue,
+		},
+		{
+			"Tests upper limit for VisibilityTimeout",
+			"queue1",
+			map[string]string{
+				"QueueUrl":          q.url,
+				"VisibilityTimeout": "43201",
+			},
+			nil,
+			ErrInvalidParameterValue,
+		},
+		{
+			"Tests error on invalid attribute names",
+			"queue1",
+			map[string]string{
+				"QueueUrl": q.url,
+				"wtf":      "43201",
+			},
+			nil,
+			ErrInvalidAttributeName,
+		},
+		{
+			"Tests error on invalid attribute value (1)",
+			"queue1",
+			map[string]string{
+				"QueueUrl":          q.url,
+				"VisibilityTimeout": "wtf",
+			},
+			nil,
+			ErrInvalidParameterValue,
+		},
+		{
+			"Tests error on invalid attribute value (2)",
+			"queue1",
+			map[string]string{
+				"QueueUrl":      q.url,
+				"RedrivePolicy": "wtf",
+			},
+			nil,
+			ErrInvalidParameterValue,
+		},
+	}
+
+	for _, test := range testsSet {
+		req = newReq("SetQueueAttributes", "c", test.params)
+		go func() {
+			ctl.setQueueAttributes(req)
+		}()
+		res := <-req.resC
+
+		if test.expectedErr != nil || res.err != nil {
+			if test.expectedErr != res.err {
+				t.Errorf(
+					"Error mismatch. %s. Expects %q, got %q with errData: %+v",
+					test.description, test.expectedErr, res.err, res.errData,
+				)
+			}
+			continue
+		}
+
+		for k := range test.params {
+			switch k {
+			case "DelaySeconds":
+				if q.delaySeconds != test.expectedAttrs.delaySeconds {
+					t.Errorf(
+						"%s. Attribute %s does not match. Expects %d, Got %d",
+						test.description, k, test.expectedAttrs.delaySeconds, q.delaySeconds,
+					)
+					continue
+				}
+			case "MaximumMessageSize":
+				if q.maximumMessageSize != test.expectedAttrs.maximumMessageSize {
+					t.Errorf(
+						"%s. Attribute %s does not match. Expects %d, Got %d",
+						test.description, k, test.expectedAttrs.maximumMessageSize,
+						q.maximumMessageSize,
+					)
+					continue
+				}
+			case "MessageRetentionPeriod":
+				if q.messageRetentionPeriod != test.expectedAttrs.messageRetentionPeriod {
+					t.Errorf(
+						"%s. Attribute %s does not match. Expects %d, Got %d",
+						test.description, k, test.expectedAttrs.messageRetentionPeriod,
+						q.messageRetentionPeriod,
+					)
+					continue
+				}
+			case "ReceiveMessageWaitTimeSeconds":
+				if q.receiveMessageWaitTimeSeconds != test.expectedAttrs.receiveMessageWaitTimeSeconds {
+					t.Errorf(
+						"%s. Attribute %s does not match. Expects %d, Got %d",
+						test.description, k, test.expectedAttrs.receiveMessageWaitTimeSeconds,
+						q.receiveMessageWaitTimeSeconds,
+					)
+					continue
+				}
+			case "RedrivePolicy":
+				if q.deadLetterTargetArn != test.expectedAttrs.deadLetterTargetArn {
+					t.Errorf(
+						"%s. Attribute %s does not match. Expects %q, Got %q",
+						test.description, k, test.expectedAttrs.deadLetterTargetArn,
+						q.deadLetterTargetArn,
+					)
+					continue
+				}
+				if q.maxReceiveCount != test.expectedAttrs.maxReceiveCount {
+					t.Errorf(
+						"%s. Attribute %s does not match. Expects %d, Got %d",
+						test.description, k, test.expectedAttrs.maxReceiveCount,
+						q.maxReceiveCount,
+					)
+					continue
+				}
+			case "VisibilityTimeout":
+				if q.visibilityTimeout != test.expectedAttrs.visibilityTimeout {
+					t.Errorf(
+						"%s. Attribute %s does not match. Expects %d, Got %d",
+						test.description, k, test.expectedAttrs.visibilityTimeout,
+						q.visibilityTimeout,
+					)
+					continue
+				}
+			}
+		}
+	}
+}

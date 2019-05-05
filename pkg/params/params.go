@@ -42,7 +42,18 @@ func ValUI32(k string, d, l, u uint32, p map[string]string) (v uint32, err error
 		return
 	}
 
-	tErr := fmt.Errorf("invalid value for the parameter %s", k)
+	v, err = UI32(s, l, u)
+	if err != nil {
+		err = fmt.Errorf("%s %s", err, k)
+	}
+
+	return
+}
+
+// UI32 returns a uint32, checking lower and upper bounds.
+func UI32(s string, l, u uint32) (v uint32, err error) {
+
+	tErr := fmt.Errorf("invalid value for the parameter")
 	v64, err := strconv.ParseUint(s, 10, 32)
 	if err != nil {
 		err = tErr
