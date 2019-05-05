@@ -169,21 +169,13 @@ func TestCreateQueueAndProperties(t *testing.T) {
 		}()
 		res := <-req.resC
 
-		if test.expectedErr != nil {
+		if test.expectedErr != nil || res.err != nil {
 			if test.expectedErr != res.err {
 				t.Errorf(
 					"Error mismatch. %s. Expects %q, got %q with errData: %+v",
 					test.description, test.expectedErr, res.err, res.errData,
 				)
 			}
-			continue
-		}
-
-		if res.err != nil {
-			t.Errorf(
-				"Unexpected error. %s. Error %s, with message: %+v",
-				test.description, res.err, res.errData,
-			)
 			continue
 		}
 
