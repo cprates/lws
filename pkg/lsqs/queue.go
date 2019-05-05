@@ -1,11 +1,13 @@
 package lsqs
 
 type queue struct {
-	name string
-	lrn  string // arn
-	url  string
+	name                  string
+	lrn                   string // arn
+	url                   string
+	createdTimestamp      int64
+	lastModifiedTimestamp int64
 
-	// Common
+	// Configurable
 	delaySeconds                  uint32
 	maximumMessageSize            uint32
 	messageRetentionPeriod        uint32
@@ -14,7 +16,6 @@ type queue struct {
 	// Redrive policy
 	deadLetterTargetArn string
 	maxReceiveCount     uint32
-
 	// FIFO
 	fifoQueue                 bool
 	contentBasedDeduplication bool

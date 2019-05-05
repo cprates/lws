@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 
@@ -55,6 +57,7 @@ var (
 func (l *lSqs) Process(reqC chan request) {
 
 	// TODO: add a default to return the not implemented
+	// TODO: add a select to read from the reqC and from a tick update and sync channel
 	for req := range reqC {
 		switch req.action {
 		case "CreateQueue":
@@ -63,6 +66,8 @@ func (l *lSqs) Process(reqC chan request) {
 			l.listQueues(req)
 		case "DeleteQueue":
 			l.deleteQueue(req)
+		case "GetQueueAttributes":
+			l.getQueueAttributes(req)
 		case "GetQueueUrl":
 			l.getQueueURL(req)
 		}
@@ -122,10 +127,13 @@ func (l *lSqs) createQueue(req request) {
 	name := req.params["QueueName"]
 	url := fmt.Sprintf("%s://%s.queue.%s/%s/%s", l.scheme, l.region, l.host, l.accountID, name)
 	lrn := fmt.Sprintf("arn:aws:sqs:%s:%s:%s", l.region, l.accountID, name)
+	ts := time.Now().Unix()
 	q := &queue{
-		name: name,
-		lrn:  lrn,
-		url:  url,
+		name:                  name,
+		lrn:                   lrn,
+		url:                   url,
+		createdTimestamp:      ts,
+		lastModifiedTimestamp: ts,
 	}
 
 	log.Debugln("Creating new queue", url)
@@ -242,17 +250,87 @@ func (l *lSqs) deleteQueue(req request) {
 	req.resC <- &reqResult{}
 }
 
+func (l *lSqs) getQueueAttributes(req request) {
+
+	queueURL := req.params["QueueUrl"]
+
+	log.Debugln("Getting Attributes for queue", queueURL)
+
+	var q *queue
+	if q = queueByURL(queueURL, l.queues); q == nil {
+		req.resC <- &reqResult{err: ErrNonExistentQueue}
+		return
+	}
+
+	var toGet []string
+
+	if _, all := req.params["All"]; all {
+		toGet = []string{
+			"ApproximateNumberOfMessages", "ApproximateNumberOfMessagesDelayed",
+			"ApproximateNumberOfMessagesNotVisible", "CreatedTimestamp", "DelaySeconds",
+			"LastModifiedTimestamp", "MaximumMessageSize", "MessageRetentionPeriod", "QueueArn",
+			"ReceiveMessageWaitTimeSeconds", "RedrivePolicy", "VisibilityTimeout", "FifoQueue",
+			"ContentBasedDeduplication",
+		}
+	} else {
+		for k := range req.params {
+			toGet = append(toGet, k)
+		}
+	}
+
+	qAttrs := map[string]string{}
+	for _, attr := range toGet {
+		switch attr {
+		case "ApproximateNumberOfMessages":
+			// TODO
+		case "ApproximateNumberOfMessagesDelayed":
+			// TODO
+		case "ApproximateNumberOfMessagesNotVisible":
+			// TODO
+		case "CreatedTimestamp":
+			qAttrs[attr] = strconv.FormatInt(q.createdTimestamp, 10)
+		case "DelaySeconds":
+			qAttrs[attr] = strconv.FormatUint(uint64(q.delaySeconds), 10)
+		case "LastModifiedTimestamp":
+			qAttrs[attr] = strconv.FormatInt(q.lastModifiedTimestamp, 10)
+		case "MaximumMessageSize":
+			qAttrs[attr] = strconv.FormatUint(uint64(q.maximumMessageSize), 10)
+		case "MessageRetentionPeriod":
+			qAttrs[attr] = strconv.FormatUint(uint64(q.messageRetentionPeriod), 10)
+		case "QueueArn":
+			qAttrs[attr] = q.lrn
+		case "ReceiveMessageWaitTimeSeconds":
+			qAttrs[attr] = strconv.FormatUint(uint64(q.receiveMessageWaitTimeSeconds), 10)
+		case "RedrivePolicy":
+			if q.deadLetterTargetArn != "" {
+				rp := map[string]string{
+					"DeadLetterTargetArn": q.deadLetterTargetArn,
+					"MaxReceiveCount":     strconv.FormatUint(uint64(q.maxReceiveCount), 10),
+				}
+				b, _ := json.Marshal(rp)
+				qAttrs[attr] = string(b)
+			}
+		case "VisibilityTimeout":
+			qAttrs[attr] = strconv.FormatUint(uint64(q.visibilityTimeout), 10)
+		case "FifoQueue":
+			// TODO
+		case "ContentBasedDeduplication":
+			// TODO
+		}
+	}
+
+	req.resC <- &reqResult{data: qAttrs}
+}
+
 func (l *lSqs) getQueueURL(req request) {
 
 	queueName := req.params["QueueName"]
 
 	log.Debugln("Getting URL for queue", queueName)
 
-	for name, q := range l.queues {
-		if name == queueName {
-			req.resC <- &reqResult{data: q.url}
-			return
-		}
+	if q := queueByName(queueName, l.queues); q != nil {
+		req.resC <- &reqResult{data: q.url}
+		return
 	}
 
 	req.resC <- &reqResult{err: ErrNonExistentQueue}
@@ -285,6 +363,28 @@ func queueByArn(arn string, queues map[string]*queue) *queue {
 
 	for _, q := range queues {
 		if arn == q.lrn {
+			return q
+		}
+	}
+
+	return nil
+}
+
+func queueByName(name string, queues map[string]*queue) *queue {
+
+	for _, q := range queues {
+		if name == q.name {
+			return q
+		}
+	}
+
+	return nil
+}
+
+func queueByURL(url string, queues map[string]*queue) *queue {
+
+	for _, q := range queues {
+		if url == q.url {
 			return q
 		}
 	}

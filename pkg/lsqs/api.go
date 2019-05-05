@@ -120,6 +120,57 @@ func (a API) DeleteQueue(ctx context.Context, params map[string]string) common.R
 	return common.SuccessRes(buf, reqID)
 }
 
+// GetQueueAttributes returns the requested attributes of an specified queue.
+func (a API) GetQueueAttributes(ctx context.Context, params map[string]string) common.Result {
+
+	reqID := ctx.Value(common.ReqIDKey{}).(string)
+
+	if _, present := params["QueueUrl"]; !present {
+		return common.ErrMissingParamRes("QueueUrl is a required parameter", reqID)
+	}
+
+	res := a.pushReq("GetQueueAttributes", reqID, params)
+	if res.err != nil {
+		switch res.err {
+		case ErrNonExistentQueue:
+			return ErrNonExistentQueueRes(reqID)
+		default:
+			return common.ErrInternalErrorRes(res.err.Error(), reqID)
+		}
+	}
+
+	xmlData := struct {
+		XMLName                  xml.Name `xml:"GetQueueAttributes"`
+		GetQueueAttributesResult struct {
+			Attribute []struct {
+				Name  string
+				Value string
+			}
+		}
+		ResponseMetadata struct {
+			RequestID string `xml:"RequestId"`
+		}
+	}{}
+	xmlData.ResponseMetadata.RequestID = reqID
+	attrs := res.data.(map[string]string)
+	for k, v := range attrs {
+		xmlData.GetQueueAttributesResult.Attribute = append(
+			xmlData.GetQueueAttributesResult.Attribute,
+			struct {
+				Name  string
+				Value string
+			}{k, v},
+		)
+	}
+
+	buf, err := xml.Marshal(xmlData)
+	if err != nil {
+		return common.ErrInternalErrorRes(err.Error(), reqID)
+	}
+
+	return common.SuccessRes(buf, reqID)
+}
+
 // GetQueueUrl returns the URL of an existing Amazon SQS queue.
 func (a API) GetQueueUrl(ctx context.Context, params map[string]string) common.Result {
 

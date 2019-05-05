@@ -12,7 +12,10 @@ package lsqs
 // list queues - prefix
 // list queues - exceeding limit
 
-import "testing"
+import (
+	"strconv"
+	"testing"
+)
 
 // Tests if a Queue is created and its properties are correctly set and within the limits.
 func TestCreateQueueAndProperties(t *testing.T) {
@@ -24,7 +27,7 @@ func TestCreateQueueAndProperties(t *testing.T) {
 		host:      "localhost:1234",
 		queues: map[string]*queue{
 			"dummyQ": {
-				lrn: "arn:aws:sqs:us-east-1:80398EXAMPLE:MyDeadLetterQueue",
+				lrn: "arn:aws:sqs:us-east-1:80398EXAMPLE:queue1",
 			},
 		},
 	}
@@ -67,7 +70,7 @@ func TestCreateQueueAndProperties(t *testing.T) {
 				"MaximumMessageSize":            "1024",
 				"MessageRetentionPeriod":        "1209600",
 				"ReceiveMessageWaitTimeSeconds": "20",
-				"RedrivePolicy":                 `{"deadLetterTargetArn":"arn:aws:sqs:us-east-1:80398EXAMPLE:MyDeadLetterQueue","maxReceiveCount":"1000"}`,
+				"RedrivePolicy":                 `{"deadLetterTargetArn":"arn:aws:sqs:us-east-1:80398EXAMPLE:queue1","maxReceiveCount":"1000"}`,
 				"VisibilityTimeout":             "43200",
 				"FifoQueue":                     "true",
 				"ContentBasedDeduplication":     "true",
@@ -80,7 +83,7 @@ func TestCreateQueueAndProperties(t *testing.T) {
 				maximumMessageSize:            1024,
 				messageRetentionPeriod:        1209600,
 				receiveMessageWaitTimeSeconds: 20,
-				deadLetterTargetArn:           "arn:aws:sqs:us-east-1:80398EXAMPLE:MyDeadLetterQueue",
+				deadLetterTargetArn:           "arn:aws:sqs:us-east-1:80398EXAMPLE:queue1",
 				maxReceiveCount:               1000,
 				visibilityTimeout:             43200,
 				fifoQueue:                     true,
@@ -185,6 +188,18 @@ func TestCreateQueueAndProperties(t *testing.T) {
 			continue
 		}
 
+		if q.createdTimestamp == 0 {
+			t.Errorf("CreatedTimestamp not set. %s.", test.description)
+			continue
+		}
+		test.expectedQ.createdTimestamp = q.createdTimestamp
+
+		if q.lastModifiedTimestamp == 0 {
+			t.Errorf("LastModifiedTimestamp not set. %s.", test.description)
+			continue
+		}
+		test.expectedQ.lastModifiedTimestamp = q.lastModifiedTimestamp
+
 		if *q != test.expectedQ {
 			t.Errorf(
 				"Queue doesn't match. %s. Got %+v, expects %+v",
@@ -193,5 +208,115 @@ func TestCreateQueueAndProperties(t *testing.T) {
 			continue
 		}
 	}
+}
 
+// Tests GetQueueAttributes action.
+func TestGetQueueAttributes(t *testing.T) {
+
+	ctl := &lSqs{
+		accountID: "0000000000",
+		region:    "dummy-region",
+		scheme:    "http",
+		host:      "localhost:1234",
+		queues:    map[string]*queue{},
+	}
+
+	req := newReq("CreateQueue", "b", map[string]string{"QueueName": "deatletter"})
+	go func() {
+		ctl.createQueue(req)
+	}()
+	<-req.resC
+	dlq := queueByName("deatletter", ctl.queues)
+
+	req = newReq(
+		"CreateQueue",
+		"a",
+		map[string]string{
+			"QueueName":     "queue1",
+			"RedrivePolicy": `{"deadLetterTargetArn":"` + dlq.lrn + `","maxReceiveCount":"1000"}`,
+		},
+	)
+	go func() {
+		ctl.createQueue(req)
+	}()
+	<-req.resC
+
+	q := queueByName("queue1", ctl.queues)
+
+	testsSet := []struct {
+		description   string
+		qName         string
+		params        map[string]string
+		expectedAttrs map[string]string
+		expectedErr   error
+	}{
+		{
+			"Gets All attributes",
+			"queue1",
+			map[string]string{
+				"QueueUrl": q.url,
+				"All":      "",
+			},
+
+			map[string]string{
+				"DelaySeconds":                  "0",
+				"MaximumMessageSize":            "262144",
+				"MessageRetentionPeriod":        "345600",
+				"ReceiveMessageWaitTimeSeconds": "0",
+				"RedrivePolicy":                 `{"DeadLetterTargetArn":"` + dlq.lrn + `","MaxReceiveCount":"1000"}`,
+				"VisibilityTimeout":             "30",
+				"QueueArn":                      q.lrn,
+				"CreatedTimestamp":              strconv.FormatInt(q.createdTimestamp, 10),
+				"LastModifiedTimestamp":         strconv.FormatInt(q.createdTimestamp, 10),
+			},
+			nil,
+		},
+		{
+			"Gets attributes of an non-existing queue",
+			"queue1",
+			map[string]string{
+				"QueueUrl": "abc",
+				"All":      "",
+			},
+			nil,
+			ErrNonExistentQueue,
+		},
+	}
+
+	for _, test := range testsSet {
+		req = newReq("GetQueueAttributes", "c", test.params)
+		go func() {
+			ctl.getQueueAttributes(req)
+		}()
+		res := <-req.resC
+
+		if test.expectedErr != nil || res.err != nil {
+			if test.expectedErr != res.err {
+				t.Errorf(
+					"Error mismatch. %s. Expects %q, got %q with errData: %+v",
+					test.description, test.expectedErr, res.err, res.errData,
+				)
+			}
+			continue
+		}
+
+		attrs := res.data.(map[string]string)
+		if len(attrs) != len(test.expectedAttrs) {
+			t.Errorf(
+				"%s. Expects %d attributes, Got %d. %+v ** %+v",
+				test.description, len(test.expectedAttrs), len(attrs), test.expectedAttrs, attrs,
+			)
+			continue
+		}
+
+		for k, v := range test.expectedAttrs {
+			if attrs[k] != v {
+				t.Errorf(
+					"%s. Attribute %s does not match. Expects %q, Got %q",
+					test.description, k, v, attrs[k],
+				)
+				continue
+			}
+		}
+	}
 }

@@ -143,13 +143,17 @@ func flattAndParse(params map[string][]string) (res map[string]string) {
 	res = map[string]string{}
 
 	for k, v := range params {
-		if !isAttr("Name", k) {
-			if !isAttr("Value", k) {
+		if isAttrArray(k) {
+			res[v[0]] = ""
+			continue
+		}
+
+		if !isAttrMap("Name", k) {
+			if !isAttrMap("Value", k) {
 				res[k] = v[0]
 			}
 			continue
 		}
-
 		// has pair?
 		parts := strings.Split(k, ".")
 		attrValKey := "Attribute." + parts[1] + ".Value"
@@ -164,7 +168,7 @@ func flattAndParse(params map[string][]string) (res map[string]string) {
 	return
 }
 
-func isAttr(t, v string) bool {
+func isAttrMap(t, v string) bool {
 
 	if !strings.HasPrefix(v, "Attribute.") {
 		return false
@@ -175,6 +179,23 @@ func isAttr(t, v string) bool {
 
 	parts := strings.Split(v, ".")
 	if len(parts) > 3 {
+		return false
+	}
+	if _, err := strconv.Atoi(parts[1]); err != nil {
+		return false
+	}
+
+	return true
+}
+
+func isAttrArray(v string) bool {
+
+	if !strings.HasPrefix(v, "AttributeName.") {
+		return false
+	}
+
+	parts := strings.Split(v, ".")
+	if len(parts) > 2 {
 		return false
 	}
 	if _, err := strconv.Atoi(parts[1]); err != nil {
