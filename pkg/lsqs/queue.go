@@ -11,6 +11,7 @@ type queue struct {
 	delaySeconds                  uint32
 	maximumMessageSize            uint32
 	messageRetentionPeriod        uint32
+	messages                      []*message
 	receiveMessageWaitTimeSeconds uint32
 	visibilityTimeout             uint32
 	// Redrive policy

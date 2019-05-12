@@ -3,6 +3,7 @@ package lsqs
 import (
 	"context"
 	"encoding/xml"
+	"net/url"
 
 	"github.com/cprates/lws/common"
 )
@@ -240,7 +241,60 @@ func (a API) ListQueues(ctx context.Context, params map[string]string) common.Re
 	return common.SuccessRes(buf, reqID)
 }
 
-// SetQueueAttributes sets the given attributes to in the specified queue.
+// SendMessage a message to the specified queue.
+func (a API) SendMessage(ctx context.Context, params map[string]string) common.Result {
+	reqID := ctx.Value(common.ReqIDKey{}).(string)
+
+	if _, present := params["QueueUrl"]; !present {
+		return common.ErrMissingParamRes("QueueUrl is a required parameter", reqID)
+	}
+
+	if _, present := params["MessageBody"]; !present {
+		return common.ErrMissingParamRes("MessageBody is a required parameter", reqID)
+	}
+	escaped, err := url.QueryUnescape(params["MessageBody"])
+	if err != nil {
+		return common.ErrInternalErrorRes(err.Error(), reqID)
+	}
+	params["MessageBody"] = escaped
+
+	res := a.pushReq("SendMessage", reqID, params)
+	if res.err != nil {
+		switch res.err {
+		case ErrInvalidParameterValue:
+			return common.ErrInvalidParameterValueRes(res.errData.(string), reqID)
+		case ErrNonExistentQueue:
+			return ErrNonExistentQueueRes(reqID)
+		default:
+			return common.ErrInternalErrorRes(res.err.Error(), reqID)
+		}
+	}
+
+	xmlData := struct {
+		XMLName           xml.Name `xml:"SendMessageResponse"`
+		SendMessageResult struct {
+			MD5OfMessageBody string
+			MessageID        string `xml:"MessageId"`
+		}
+		ResponseMetadata struct {
+			RequestID string `xml:"RequestId"`
+		}
+	}{}
+
+	m := res.data.(map[string]string)
+	xmlData.SendMessageResult.MD5OfMessageBody = m["MD5OfMessageBody"]
+	xmlData.SendMessageResult.MessageID = m["MessageId"]
+	xmlData.ResponseMetadata.RequestID = reqID
+
+	buf, err := xml.Marshal(xmlData)
+	if err != nil {
+		return common.ErrInternalErrorRes(err.Error(), reqID)
+	}
+
+	return common.SuccessRes(buf, reqID)
+}
+
+// SetQueueAttributes sets the given attributes to the specified queue.
 func (a API) SetQueueAttributes(ctx context.Context, params map[string]string) common.Result {
 
 	reqID := ctx.Value(common.ReqIDKey{}).(string)

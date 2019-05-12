@@ -12,9 +12,13 @@ package lsqs
 // list queues - prefix
 // list queues - exceeding limit
 
+// SendMessage - test escaped characters in message body
+
 import (
 	"strconv"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 // Tests if a Queue is created and its properties are correctly set and within the limits.
@@ -200,11 +204,9 @@ func TestCreateQueueAndProperties(t *testing.T) {
 		}
 		test.expectedQ.lastModifiedTimestamp = q.lastModifiedTimestamp
 
-		if *q != test.expectedQ {
-			t.Errorf(
-				"Queue doesn't match. %s. Got %+v, expects %+v",
-				test.description, *q, test.expectedQ,
-			)
+		diff := cmp.Diff(*q, test.expectedQ, cmp.AllowUnexported(*q, test.expectedQ))
+		if diff != "" {
+			t.Errorf("Queue doesn't match. %s. %s", test.description, diff)
 			continue
 		}
 	}

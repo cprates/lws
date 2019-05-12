@@ -72,6 +72,8 @@ func (l *lSqs) Process(reqC chan request) {
 			l.getQueueAttributes(req)
 		case "GetQueueUrl":
 			l.getQueueURL(req)
+		case "SendMessage":
+			l.sendMessage(req)
 		case "SetQueueAttributes":
 			l.setQueueAttributes(req)
 		}
@@ -360,6 +362,56 @@ func (l *lSqs) listQueues(req request) {
 	}
 
 	req.resC <- &reqResult{data: urls}
+}
+
+func (l *lSqs) sendMessage(req request) {
+
+	queueURL := req.params["QueueUrl"]
+
+	log.Debugln("Sending message to queue", queueURL)
+
+	var q *queue
+	if q = queueByURL(queueURL, l.queues); q == nil {
+		req.resC <- &reqResult{err: ErrNonExistentQueue}
+		return
+	}
+
+	body := []byte(req.params["MessageBody"])
+	if uint32(len(body)) > q.maximumMessageSize {
+		err := fmt.Sprintf(
+			"One or more parameters are invalid. Reason: Message must be shorter than %d bytes.",
+			q.maximumMessageSize,
+		)
+		log.Debugln(err)
+		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err}
+		return
+	}
+	// TODO: check allowed chars
+
+	delaySeconds, err := params.ValUI32("DelaySeconds", q.delaySeconds, 0, 900, req.params)
+	if err != nil {
+		log.Debugln(err)
+		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
+		return
+	}
+
+	msg, err := newMessage(body, time.Duration(delaySeconds)*time.Second)
+	if err != nil {
+		log.Debugln(err)
+		req.resC <- &reqResult{err: err}
+		return
+	}
+
+	q.messages = append(q.messages, msg)
+
+	req.resC <- &reqResult{
+		data: map[string]string{
+			//"MD5OfMessageAttributes": "", // TODO: attributes not supported yet
+			"MD5OfMessageBody": msg.md5OfMessageBody,
+			"MessageId":        msg.messageID,
+			//"SequenceNumber":         "", // TODO: FIFO not supported yet
+		},
+	}
 }
 
 func (l *lSqs) setQueueAttributes(req request) {
