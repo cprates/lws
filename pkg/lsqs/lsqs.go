@@ -10,12 +10,13 @@ import (
 
 	log "github.com/sirupsen/logrus"
 
+	"github.com/cprates/lws/pkg/datastructs"
 	"github.com/cprates/lws/pkg/params"
 )
 
 // LSqs is the interface to implement if you want to implement your own SQS service.
 type LSqs interface {
-	Process(chan request)
+	Process(<-chan request, <-chan struct{})
 }
 
 // lSqs represents an instance of LSqs core.
@@ -56,30 +57,104 @@ var (
 )
 
 // TODO: doc
-func (l *lSqs) Process(reqC chan request) {
+func (l *lSqs) Process(reqC <-chan request, stopC <-chan struct{}) {
 
-	// TODO: add a default to return the not implemented
-	// TODO: add a select to read from the reqC and from a tick update and sync channel
-	for req := range reqC {
-		switch req.action {
-		case "CreateQueue":
-			l.createQueue(req)
-		case "ListQueues":
-			l.listQueues(req)
-		case "DeleteQueue":
-			l.deleteQueue(req)
-		case "GetQueueAttributes":
-			l.getQueueAttributes(req)
-		case "GetQueueUrl":
-			l.getQueueURL(req)
-		case "SendMessage":
-			l.sendMessage(req)
-		case "SetQueueAttributes":
-			l.setQueueAttributes(req)
+	inflightTick := time.NewTicker(250 * time.Millisecond)
+	retentionTick := time.NewTicker(500 * time.Millisecond)
+
+forloop:
+	for {
+		select {
+		case req := <-reqC:
+			switch req.action {
+			case "CreateQueue":
+				l.createQueue(req)
+			case "DeleteQueue":
+				l.deleteQueue(req)
+			case "GetQueueAttributes":
+				l.getQueueAttributes(req)
+			case "GetQueueUrl":
+				l.getQueueURL(req)
+			case "ListQueues":
+				l.listQueues(req)
+			case "ReceiveMessage":
+				l.receiveMessage(req)
+			case "SendMessage":
+				l.sendMessage(req)
+			case "SetQueueAttributes":
+				l.setQueueAttributes(req)
+			default:
+				req.resC <- &reqResult{err: fmt.Errorf("%q not implemented", req.action)}
+				break
+			}
+		case <-inflightTick.C:
+			l.handleInflight()
+		case <-retentionTick.C:
+			l.handleRetention()
+		case <-stopC:
+			break forloop
 		}
 	}
 
 	log.Println("Shutting down LSQS...")
+	inflightTick.Stop()
+	retentionTick.Stop()
+}
+
+func (l *lSqs) handleInflight() {
+
+	now := time.Now().UTC()
+	for _, queue := range l.queues {
+		for node := queue.inflightMessages.Head; node != nil; node = node.Next() {
+			msg := node.Data.(*message)
+			if msg.deadline.After(now) {
+				// the list is sorted by deadline so, move to the next queue
+				break
+			}
+
+			node, err := queue.inflightMessages.Take()
+			if err != nil {
+				log.Error(err)
+				continue
+			}
+
+			// if retention period has been exceeded while inflight, drop the message
+			expires := msg.createdTimestamp.Add(
+				time.Duration(queue.messageRetentionPeriod) * time.Second,
+			)
+			if expires.After(now) {
+				log.Debugln("Message", msg.messageID, "moved from inflight to main queue")
+				queue.messages.Append(node.Data)
+			} else {
+				log.Debugln("Message", msg.messageID, "dropped after inflight period")
+			}
+		}
+	}
+}
+
+func (l *lSqs) handleRetention() {
+
+	now := time.Now().UTC()
+	for _, queue := range l.queues {
+		var toRemove []*datastructs.Node
+		for node := queue.messages.Head; node != nil; node = node.Next() {
+			msg := node.Data.(*message)
+			expires := msg.createdTimestamp.Add(
+				time.Duration(queue.messageRetentionPeriod) * time.Second,
+			)
+
+			if expires.Before(now) {
+				toRemove = append(toRemove, node)
+				log.Debugln("Message", msg.messageID, "expired retention period")
+			}
+		}
+
+		// TODO: this is highly inefficient. The list of messages should be sorted by creation date
+		// to allow remove in contiguous blocks using TakeN
+		for _, node := range toRemove {
+			queue.messages.Remove(node)
+		}
+	}
 }
 
 func validateRedrivePolicy(
@@ -140,6 +215,8 @@ func (l *lSqs) createQueue(req request) {
 		url:                   url,
 		createdTimestamp:      ts,
 		lastModifiedTimestamp: ts,
+		messages:              datastructs.NewSList(),
+		inflightMessages:      datastructs.NewSList(),
 	}
 
 	log.Debugln("Creating new queue", url)
@@ -364,6 +441,48 @@ func (l *lSqs) listQueues(req request) {
 	req.resC <- &reqResult{data: urls}
 }
 
+func (l *lSqs) receiveMessage(req request) {
+
+	queueURL := req.params["QueueUrl"]
+
+	log.Debugln("Receiving messages from queue", queueURL)
+
+	var q *queue
+	if q = queueByURL(queueURL, l.queues); q == nil {
+		req.resC <- &reqResult{err: ErrNonExistentQueue}
+		return
+	}
+
+	waitTimeSeconds, err := params.ValUI32(
+		"WaitTimeSeconds", q.receiveMessageWaitTimeSeconds, 0, 20, req.params,
+	)
+	if err != nil {
+		log.Debugln(err)
+		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
+		return
+	}
+
+	maxNumberOfMessages, err := params.ValUI32("MaxNumberOfMessages", 1, 1, 10, req.params)
+	if err != nil {
+		log.Debugln(err)
+		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
+		return
+	}
+
+	messages := q.takeUpTo(int(maxNumberOfMessages))
+
+	// not long poll
+	if waitTimeSeconds == 0 {
+		// move messages to inflight queue
+		q.setInflight(messages)
+		req.resC <- &reqResult{data: messages}
+		return
+	}
+
+	// long poll goes here!
+	log.Fatal("LONG POLL NOT YET IMPLEMENTED!")
+}
+
 func (l *lSqs) sendMessage(req request) {
 
 	queueURL := req.params["QueueUrl"]
@@ -388,6 +507,7 @@ func (l *lSqs) sendMessage(req request) {
 	}
 	// TODO: check allowed chars
 
+	// TODO: handle this - it CAN'T be added to the normal queue! AND in newMessage, the creationDate needs to take into account the delaySeconds
 	delaySeconds, err := params.ValUI32("DelaySeconds", q.delaySeconds, 0, 900, req.params)
 	if err != nil {
 		log.Debugln(err)
@@ -395,14 +515,19 @@ func (l *lSqs) sendMessage(req request) {
 		return
 	}
 
-	msg, err := newMessage(body, time.Duration(delaySeconds)*time.Second)
+	msg, err := newMessage(l, body, time.Duration(delaySeconds)*time.Second)
 	if err != nil {
 		log.Debugln(err)
 		req.resC <- &reqResult{err: err}
 		return
 	}
 
-	q.messages = append(q.messages, msg)
+	q.messages.Append(msg)
+
+	log.Debugln(
+		"Sent message", msg.messageID,
+		"to queue", q.url,
+	)
 
 	req.resC <- &reqResult{
 		data: map[string]string{
@@ -533,7 +658,7 @@ func queueByURL(url string, queues map[string]*queue) *queue {
 	return nil
 }
 
-// configDiff compares the current attributes with the new ones provided returning a list with
+// configDiff compares the current attributes with the new ones provided returning a datastructs with
 // the names of the attributes that change.
 func configDiff(q *queue, newAttrs map[string]string) []string {
 	// TODO

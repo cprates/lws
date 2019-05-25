@@ -1,3 +1,6 @@
+// Package datastructs implements a Simply Linked List without sentinel, that allows take and
+// append blocks of n contiguous nodes. If your usage pattern instead uses Remove very frequently
+// you should consider a Doubly Linked List instead.
 package datastructs
 
 // Node represents a container that SList is composed of.
@@ -139,4 +142,32 @@ func (s *SList) TakeUpToN(n int) (nodes []*Node) {
 		s.Tail = nil
 	}
 	return
+}
+
+// Remove the given node from the list.
+// This is terrible but, it is temporary.
+func (s *SList) Remove(node *Node) *SList {
+
+	if s.Head == node {
+		s.Size--
+		s.Head = node.next
+		if s.Tail == node {
+			s.Tail = node.next
+		}
+
+		node.next = nil
+
+		return s
+	}
+
+	for nd := s.Head; nd != nil; nd = nd.Next() {
+		if nd.next == node {
+			s.Size--
+			nd.next = node.next
+			node.next = nil
+			return s
+		}
+	}
+
+	return s
 }

@@ -17,8 +17,11 @@ package lsqs
 import (
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/cprates/lws/pkg/datastructs"
 )
 
 // Tests if a Queue is created and its properties are correctly set and within the limits.
@@ -50,6 +53,8 @@ func TestCreateQueueAndProperties(t *testing.T) {
 				"QueueName": "queue1",
 			},
 			queue{
+				messages:                      datastructs.NewSList(),
+				inflightMessages:              datastructs.NewSList(),
 				name:                          "queue1",
 				lrn:                           "arn:aws:sqs:dummy-region:0000000000:queue1",
 				url:                           "http://dummy-region.queue.localhost:1234/0000000000/queue1",
@@ -80,6 +85,8 @@ func TestCreateQueueAndProperties(t *testing.T) {
 				"ContentBasedDeduplication":     "true",
 			},
 			queue{
+				messages:                      datastructs.NewSList(),
+				inflightMessages:              datastructs.NewSList(),
 				name:                          "queue2",
 				lrn:                           "arn:aws:sqs:dummy-region:0000000000:queue2",
 				url:                           "http://dummy-region.queue.localhost:1234/0000000000/queue2",
@@ -577,5 +584,152 @@ func TestSetQueueAttributes(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestInflightHandler(t *testing.T) {
+
+	ctl := &lSqs{
+		accountID: "0000000000",
+		region:    "dummy-region",
+		scheme:    "http",
+		host:      "localhost:1234",
+		queues:    map[string]*queue{},
+	}
+
+	req := newReq("CreateQueue", "a", map[string]string{"QueueName": "queue1"})
+	go func() {
+		ctl.createQueue(req)
+	}()
+	<-req.resC
+	q1 := queueByName("queue1", ctl.queues)
+
+	req = newReq(
+		"CreateQueue",
+		"b",
+		map[string]string{"QueueName": "queue2", "MessageRetentionPeriod": "60"},
+	)
+	go func() {
+		ctl.createQueue(req)
+	}()
+	<-req.resC
+
+	q2 := queueByName("queue2", ctl.queues)
+
+	msg10, err := newMessage(ctl, []byte("body10"), 0)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	msg10.deadline = time.Now().UTC().Add(time.Second * -10)
+	q1.inflightMessages.Append(msg10)
+
+	msg11, err := newMessage(ctl, []byte("body11"), 0)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	msg11.deadline = time.Now().UTC().Add(time.Second * 10)
+	q1.inflightMessages.Append(msg11)
+
+	msg20, err := newMessage(ctl, []byte("body20"), 0)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	msg20.deadline = time.Now().UTC().Add(time.Second * -10)
+	// mock creation date to force it to be dropped
+	msg20.createdTimestamp = time.Now().UTC().Add(time.Second * -61)
+	q2.inflightMessages.Append(msg20)
+
+	msg21, err := newMessage(ctl, []byte("body21"), 0)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	msg21.deadline = time.Now().UTC().Add(time.Second * -10)
+	q2.inflightMessages.Append(msg21)
+
+	ctl.handleInflight()
+
+	// test
+	if q1.inflightMessages.Size != 1 {
+		t.Errorf("expects 1 inflight message, got %d for 'queue1'", q1.inflightMessages.Size)
+	}
+
+	if q2.inflightMessages.Size != 0 {
+		t.Errorf("expects 0 inflight messages, got %d for 'queue2'", q2.inflightMessages.Size)
+	}
+
+	if q2.messages.Size != 1 {
+		t.Errorf("expects 1 queued messages, got %d for 'queue2'", q2.messages.Size)
+	}
+}
+
+func TestRetentionHandler(t *testing.T) {
+
+	ctl := &lSqs{
+		accountID: "0000000000",
+		region:    "dummy-region",
+		scheme:    "http",
+		host:      "localhost:1234",
+		queues:    map[string]*queue{},
+	}
+
+	req := newReq(
+		"CreateQueue",
+		"a",
+		map[string]string{"QueueName": "queue1", "MessageRetentionPeriod": "60"},
+	)
+	go func() {
+		ctl.createQueue(req)
+	}()
+	<-req.resC
+	q1 := queueByName("queue1", ctl.queues)
+
+	req = newReq(
+		"CreateQueue",
+		"b",
+		map[string]string{"QueueName": "queue2", "MessageRetentionPeriod": "60"},
+	)
+	go func() {
+		ctl.createQueue(req)
+	}()
+	<-req.resC
+
+	q2 := queueByName("queue2", ctl.queues)
+
+	msg1, err := newMessage(ctl, []byte("body1"), 0)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	q1.messages.Append(msg1)
+
+	msg20, err := newMessage(ctl, []byte("body20"), 0)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	q2.messages.Append(msg20)
+
+	msg21, err := newMessage(ctl, []byte("body21"), 0)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	// mock creation date to force it to be dropped
+	msg21.createdTimestamp = time.Now().UTC().Add(time.Second * -61)
+	q2.messages.Append(msg21)
+
+	ctl.handleRetention()
+
+	// test
+	if q1.messages.Size != 1 {
+		t.Errorf("expects 1 queued message, got %d for 'queue1'", q1.messages.Size)
+	}
+
+	if q2.messages.Size != 1 {
+		t.Errorf("expects 1 queued message, got %d for 'queue2'", q2.messages.Size)
 	}
 }

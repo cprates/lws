@@ -12,6 +12,7 @@ import (
 type API struct {
 	controller LSqs
 	pushC      chan request
+	stopC      chan struct{}
 }
 
 // New creates and launches a LSqs instance.
@@ -25,11 +26,13 @@ func New(region, accountID, scheme, host string) *API {
 		queues:    map[string]*queue{},
 	}
 	pushC := make(chan request)
-	go ctl.Process(pushC)
+	stopC := make(chan struct{})
+	go ctl.Process(pushC, stopC)
 
 	return &API{
 		controller: ctl,
 		pushC:      pushC,
+		stopC:      stopC,
 	}
 }
 
@@ -211,7 +214,7 @@ func (a API) GetQueueUrl(ctx context.Context, params map[string]string) common.R
 	return common.SuccessRes(buf, reqID)
 }
 
-// ListQueues return a list o existing queues on this instance.
+// ListQueues return a datastructs of existing queues on this instance.
 func (a API) ListQueues(ctx context.Context, params map[string]string) common.Result {
 
 	reqID := ctx.Value(common.ReqIDKey{}).(string)
@@ -241,8 +244,62 @@ func (a API) ListQueues(ctx context.Context, params map[string]string) common.Re
 	return common.SuccessRes(buf, reqID)
 }
 
+// ReceiveMessage return a datastructs of messages from the specified queue.
+func (a API) ReceiveMessage(ctx context.Context, params map[string]string) common.Result {
+
+	reqID := ctx.Value(common.ReqIDKey{}).(string)
+
+	if _, present := params["QueueUrl"]; !present {
+		return common.ErrMissingParamRes("QueueUrl is a required parameter", reqID)
+	}
+
+	res := a.pushReq("ReceiveMessage", reqID, params)
+	if res.err != nil {
+
+		return common.ErrInternalErrorRes(res.err.Error(), reqID)
+	}
+
+	type Message struct {
+		MessageID     string `xml:"MessageId"`
+		ReceiptHandle string
+		MD5OfBody     string
+		Body          string
+	}
+	xmlData := struct {
+		XMLName              xml.Name `xml:"ReceiveMessageResponse"`
+		ReceiveMessageResult struct {
+			Message []*Message
+		}
+		ResponseMetadata struct {
+			RequestID string `xml:"RequestId"`
+		}
+	}{}
+	xmlData.ResponseMetadata.RequestID = reqID
+
+	messages := res.data.([]*message)
+	for _, msg := range messages {
+		xmlData.ReceiveMessageResult.Message = append(
+			xmlData.ReceiveMessageResult.Message,
+			&Message{
+				MessageID:     msg.messageID,
+				ReceiptHandle: msg.receiptHandle,
+				MD5OfBody:     msg.md5OfMessageBody,
+				Body:          string(msg.body),
+			},
+		)
+	}
+
+	buf, err := xml.Marshal(xmlData)
+	if err != nil {
+		return common.ErrInternalErrorRes(err.Error(), reqID)
+	}
+
+	return common.SuccessRes(buf, reqID)
+}
+
 // SendMessage a message to the specified queue.
 func (a API) SendMessage(ctx context.Context, params map[string]string) common.Result {
+
 	reqID := ctx.Value(common.ReqIDKey{}).(string)
 
 	if _, present := params["QueueUrl"]; !present {
