@@ -622,7 +622,7 @@ func TestInflightHandler(t *testing.T) {
 
 	q2 := queueByName("queue2", ctl.queues)
 
-	msg10, err := newMessage(ctl, []byte("body10"), 0)
+	msg10, err := newMessage(ctl, []byte("body10"), 0, 60*time.Second)
 	if err != nil {
 		t.Error(err)
 		return
@@ -630,7 +630,7 @@ func TestInflightHandler(t *testing.T) {
 	msg10.deadline = time.Now().UTC().Add(time.Second * -10)
 	q1.inflightMessages.PushBack(msg10)
 
-	msg11, err := newMessage(ctl, []byte("body11"), 0)
+	msg11, err := newMessage(ctl, []byte("body11"), 0, 60*time.Second)
 	if err != nil {
 		t.Error(err)
 		return
@@ -638,17 +638,17 @@ func TestInflightHandler(t *testing.T) {
 	msg11.deadline = time.Now().UTC().Add(time.Second * 10)
 	q1.inflightMessages.PushBack(msg11)
 
-	msg20, err := newMessage(ctl, []byte("body20"), 0)
+	msg20, err := newMessage(ctl, []byte("body20"), 0, 60*time.Second)
 	if err != nil {
 		t.Error(err)
 		return
 	}
 	msg20.deadline = time.Now().UTC().Add(time.Second * -10)
-	// mock creation date to force it to be dropped
-	msg20.createdTimestamp = time.Now().UTC().Add(time.Second * -61)
+	// mock retention deadline to force it to be dropped
+	msg20.retentionDeadline = time.Now().UTC().Add(time.Second * -61)
 	q2.inflightMessages.PushBack(msg20)
 
-	msg21, err := newMessage(ctl, []byte("body21"), 0)
+	msg21, err := newMessage(ctl, []byte("body21"), 0, 60*time.Second)
 	if err != nil {
 		t.Error(err)
 		return
@@ -705,27 +705,27 @@ func TestRetentionHandler(t *testing.T) {
 
 	q2 := queueByName("queue2", ctl.queues)
 
-	msg1, err := newMessage(ctl, []byte("body1"), 0)
+	msg1, err := newMessage(ctl, []byte("body1"), 0, 60*time.Second)
 	if err != nil {
 		t.Error(err)
 		return
 	}
 	q1.messages.PushBack(msg1)
 
-	msg20, err := newMessage(ctl, []byte("body20"), 0)
+	msg20, err := newMessage(ctl, []byte("body20"), 0, 60*time.Second)
 	if err != nil {
 		t.Error(err)
 		return
 	}
 	q2.messages.PushBack(msg20)
 
-	msg21, err := newMessage(ctl, []byte("body21"), 0)
+	msg21, err := newMessage(ctl, []byte("body21"), 0, 60*time.Second)
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	// mock creation date to force it to be dropped
-	msg21.createdTimestamp = time.Now().UTC().Add(time.Second * -61)
+	// mock retention deadline to force it to be dropped
+	msg21.retentionDeadline = time.Now().UTC().Add(time.Second * -61)
 	q2.messages.PushBack(msg21)
 
 	ctl.handleRetention()

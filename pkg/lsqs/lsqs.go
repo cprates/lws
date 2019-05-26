@@ -115,11 +115,8 @@ func (l *lSqs) handleInflight() {
 
 			toRemove = append(toRemove, elem)
 
-			// if retention period has been exceeded while inflight, drop the message
-			expires := msg.createdTimestamp.Add(
-				time.Duration(queue.messageRetentionPeriod) * time.Second,
-			)
-			if expires.After(now) {
+			// if retention deadline has been exceeded while inflight, drop the message
+			if msg.retentionDeadline.After(now) {
 				log.Debugln("Message", msg.messageID, "moved from inflight to main queue")
 				queue.messages.PushBack(msg)
 			} else {
@@ -141,11 +138,7 @@ func (l *lSqs) handleRetention() {
 		var toRemove []*list.Element
 		for node := queue.messages.Front(); node != nil; node = node.Next() {
 			msg := node.Value.(*message)
-			expires := msg.createdTimestamp.Add(
-				time.Duration(queue.messageRetentionPeriod) * time.Second,
-			)
-
-			if expires.Before(now) {
+			if msg.retentionDeadline.Before(now) {
 				toRemove = append(toRemove, node)
 				log.Debugln("Message", msg.messageID, "expired retention period")
 			}
@@ -514,7 +507,12 @@ func (l *lSqs) sendMessage(req request) {
 		return
 	}
 
-	msg, err := newMessage(l, body, time.Duration(delaySeconds)*time.Second)
+	msg, err := newMessage(
+		l,
+		body,
+		time.Duration(delaySeconds)*time.Second,
+		time.Duration(q.messageRetentionPeriod)*time.Second,
+	)
 	if err != nil {
 		log.Debugln(err)
 		req.resC <- &reqResult{err: err}

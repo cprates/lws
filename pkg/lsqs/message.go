@@ -11,8 +11,9 @@ import (
 )
 
 type message struct {
-	owner    *lSqs
-	deadline time.Time
+	owner             *lSqs
+	deadline          time.Time
+	retentionDeadline time.Time
 
 	body             []byte
 	createdTimestamp time.Time
@@ -25,7 +26,12 @@ type message struct {
 
 // NewMessage generates a new message with the given body and delay seconds ready to send
 // to a queue.
-func newMessage(owner *lSqs, body []byte, delaySeconds time.Duration) (msg *message, err error) {
+func newMessage(
+	owner *lSqs,
+	body []byte,
+	delaySeconds time.Duration,
+	retentionSeconds time.Duration,
+) (msg *message, err error) {
 
 	bodyMD5 := md5.New()
 	_, err = io.Copy(bodyMD5, bytes.NewReader(body))
@@ -46,14 +52,16 @@ func newMessage(owner *lSqs, body []byte, delaySeconds time.Duration) (msg *mess
 	}
 	rHandle := u.String()
 
+	creationTs := time.Now().UTC()
 	msg = &message{
-		owner:            owner,
-		body:             body,
-		createdTimestamp: time.Now().UTC(),
-		delaySeconds:     delaySeconds,
-		messageID:        mID,
-		md5OfMessageBody: fmt.Sprintf("%x", bodyMD5.Sum(nil)),
-		receiptHandle:    rHandle,
+		owner:             owner,
+		body:              body,
+		retentionDeadline: creationTs.Add(retentionSeconds),
+		createdTimestamp:  creationTs,
+		delaySeconds:      delaySeconds,
+		messageID:         mID,
+		md5OfMessageBody:  fmt.Sprintf("%x", bodyMD5.Sum(nil)),
+		receiptHandle:     rHandle,
 	}
 
 	return
