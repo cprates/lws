@@ -56,6 +56,7 @@ func TestCreateQueueAndProperties(t *testing.T) {
 			queue{
 				messages:                      list.New(),
 				inflightMessages:              list.New(),
+				delayedMessages:               list.New(),
 				name:                          "queue1",
 				lrn:                           "arn:aws:sqs:dummy-region:0000000000:queue1",
 				url:                           "http://dummy-region.queue.localhost:1234/0000000000/queue1",
@@ -88,6 +89,7 @@ func TestCreateQueueAndProperties(t *testing.T) {
 			queue{
 				messages:                      list.New(),
 				inflightMessages:              list.New(),
+				delayedMessages:               list.New(),
 				name:                          "queue2",
 				lrn:                           "arn:aws:sqs:dummy-region:0000000000:queue2",
 				url:                           "http://dummy-region.queue.localhost:1234/0000000000/queue2",

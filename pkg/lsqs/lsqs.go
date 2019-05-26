@@ -61,6 +61,7 @@ func (l *lSqs) Process(reqC <-chan request, stopC <-chan struct{}) {
 
 	inflightTick := time.NewTicker(250 * time.Millisecond)
 	retentionTick := time.NewTicker(500 * time.Millisecond)
+	delayTick := time.NewTicker(250 * time.Millisecond)
 
 forloop:
 	for {
@@ -91,6 +92,8 @@ forloop:
 			l.handleInflight()
 		case <-retentionTick.C:
 			l.handleRetention()
+		case <-delayTick.C:
+			l.handleDelayed()
 		case <-stopC:
 			break forloop
 		}
@@ -146,6 +149,31 @@ func (l *lSqs) handleRetention() {
 
 		for _, node := range toRemove {
 			queue.messages.Remove(node)
+		}
+	}
+}
+
+func (l *lSqs) handleDelayed() {
+
+	now := time.Now().UTC()
+	for _, queue := range l.queues {
+		var toMove []*list.Element
+		for elem := queue.delayedMessages.Front(); elem != nil; elem = elem.Next() {
+			msg := elem.Value.(*message)
+			if msg.deadline.After(now) {
+				// the list is sorted by deadline so, move to the next queue
+				break
+			}
+
+			toMove = append(toMove, elem)
+
+			log.Debugln("Message", msg.messageID, "moved from delayed to main queue")
+			queue.messages.PushBack(msg)
+		}
+
+		// remove moved ones
+		for _, elem := range toMove {
+			queue.delayedMessages.Remove(elem)
 		}
 	}
 }
@@ -210,6 +238,7 @@ func (l *lSqs) createQueue(req request) {
 		lastModifiedTimestamp: ts,
 		messages:              list.New(),
 		inflightMessages:      list.New(),
+		delayedMessages:       list.New(),
 	}
 
 	log.Debugln("Creating new queue", url)
@@ -517,6 +546,12 @@ func (l *lSqs) sendMessage(req request) {
 		log.Debugln(err)
 		req.resC <- &reqResult{err: err}
 		return
+	}
+
+	if delaySeconds == 0 {
+		q.messages.PushBack(msg)
+	} else {
+		q.setDelayed(msg, time.Duration(delaySeconds))
 	}
 
 	log.Debugln(

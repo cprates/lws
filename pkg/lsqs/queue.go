@@ -14,6 +14,7 @@ type queue struct {
 	lastModifiedTimestamp int64
 	messages              *list.List
 	inflightMessages      *list.List // Messages stored here are sorted by deadline
+	delayedMessages       *list.List // Messages stored here are sorted by deadline
 
 	// Configurable
 	delaySeconds                  uint32
@@ -58,4 +59,11 @@ func (q *queue) setInflight(messages []*message) {
 
 	q.inflightMessages.PushFrontList(elements)
 	q.inflightMessages.Sort(deadlineCmp)
+}
+
+func (q *queue) setDelayed(msg *message, delaySeconds time.Duration) {
+
+	msg.deadline = time.Now().UTC().Add(delaySeconds * time.Second)
+	q.delayedMessages.PushFront(msg)
+	q.delayedMessages.Sort(deadlineCmp)
 }
