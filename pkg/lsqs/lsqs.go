@@ -10,7 +10,7 @@ import (
 
 	log "github.com/sirupsen/logrus"
 
-	"github.com/cprates/lws/pkg/datastructs"
+	"github.com/cprates/lws/pkg/list"
 	"github.com/cprates/lws/pkg/params"
 )
 
@@ -105,18 +105,15 @@ func (l *lSqs) handleInflight() {
 
 	now := time.Now().UTC()
 	for _, queue := range l.queues {
-		for node := queue.inflightMessages.Head; node != nil; node = node.Next() {
-			msg := node.Data.(*message)
+		var toRemove []*list.Element
+		for elem := queue.inflightMessages.Front(); elem != nil; elem = elem.Next() {
+			msg := elem.Value.(*message)
 			if msg.deadline.After(now) {
 				// the list is sorted by deadline so, move to the next queue
 				break
 			}
 
-			node, err := queue.inflightMessages.Take()
-			if err != nil {
-				log.Error(err)
-				continue
-			}
+			toRemove = append(toRemove, elem)
 
 			// if retention period has been exceeded while inflight, drop the message
 			expires := msg.createdTimestamp.Add(
@@ -124,10 +121,15 @@ func (l *lSqs) handleInflight() {
 			)
 			if expires.After(now) {
 				log.Debugln("Message", msg.messageID, "moved from inflight to main queue")
-				queue.messages.Append(node.Data)
+				queue.messages.PushBack(msg)
 			} else {
 				log.Debugln("Message", msg.messageID, "dropped after inflight period")
 			}
+		}
+
+		// remove expired ones
+		for _, elem := range toRemove {
+			queue.inflightMessages.Remove(elem)
 		}
 	}
 }
@@ -136,9 +138,9 @@ func (l *lSqs) handleRetention() {
 
 	now := time.Now().UTC()
 	for _, queue := range l.queues {
-		var toRemove []*datastructs.Node
-		for node := queue.messages.Head; node != nil; node = node.Next() {
-			msg := node.Data.(*message)
+		var toRemove []*list.Element
+		for node := queue.messages.Front(); node != nil; node = node.Next() {
+			msg := node.Value.(*message)
 			expires := msg.createdTimestamp.Add(
 				time.Duration(queue.messageRetentionPeriod) * time.Second,
 			)
@@ -149,8 +151,6 @@ func (l *lSqs) handleRetention() {
 			}
 		}
 
-		// TODO: this is highly inefficient. The list of messages should be sorted by creation date
-		// to allow remove in contiguous blocks using TakeN
 		for _, node := range toRemove {
 			queue.messages.Remove(node)
 		}
@@ -215,8 +215,8 @@ func (l *lSqs) createQueue(req request) {
 		url:                   url,
 		createdTimestamp:      ts,
 		lastModifiedTimestamp: ts,
-		messages:              datastructs.NewSList(),
-		inflightMessages:      datastructs.NewSList(),
+		messages:              list.New(),
+		inflightMessages:      list.New(),
 	}
 
 	log.Debugln("Creating new queue", url)
@@ -507,7 +507,6 @@ func (l *lSqs) sendMessage(req request) {
 	}
 	// TODO: check allowed chars
 
-	// TODO: handle this - it CAN'T be added to the normal queue! AND in newMessage, the creationDate needs to take into account the delaySeconds
 	delaySeconds, err := params.ValUI32("DelaySeconds", q.delaySeconds, 0, 900, req.params)
 	if err != nil {
 		log.Debugln(err)
@@ -521,8 +520,6 @@ func (l *lSqs) sendMessage(req request) {
 		req.resC <- &reqResult{err: err}
 		return
 	}
-
-	q.messages.Append(msg)
 
 	log.Debugln(
 		"Sent message", msg.messageID,

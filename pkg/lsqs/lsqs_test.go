@@ -20,8 +20,9 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
-	"github.com/cprates/lws/pkg/datastructs"
+	"github.com/cprates/lws/pkg/list"
 )
 
 // Tests if a Queue is created and its properties are correctly set and within the limits.
@@ -53,8 +54,8 @@ func TestCreateQueueAndProperties(t *testing.T) {
 				"QueueName": "queue1",
 			},
 			queue{
-				messages:                      datastructs.NewSList(),
-				inflightMessages:              datastructs.NewSList(),
+				messages:                      list.New(),
+				inflightMessages:              list.New(),
 				name:                          "queue1",
 				lrn:                           "arn:aws:sqs:dummy-region:0000000000:queue1",
 				url:                           "http://dummy-region.queue.localhost:1234/0000000000/queue1",
@@ -85,8 +86,8 @@ func TestCreateQueueAndProperties(t *testing.T) {
 				"ContentBasedDeduplication":     "true",
 			},
 			queue{
-				messages:                      datastructs.NewSList(),
-				inflightMessages:              datastructs.NewSList(),
+				messages:                      list.New(),
+				inflightMessages:              list.New(),
 				name:                          "queue2",
 				lrn:                           "arn:aws:sqs:dummy-region:0000000000:queue2",
 				url:                           "http://dummy-region.queue.localhost:1234/0000000000/queue2",
@@ -211,7 +212,12 @@ func TestCreateQueueAndProperties(t *testing.T) {
 		}
 		test.expectedQ.lastModifiedTimestamp = q.lastModifiedTimestamp
 
-		diff := cmp.Diff(*q, test.expectedQ, cmp.AllowUnexported(*q, test.expectedQ))
+		diff := cmp.Diff(
+			*q,
+			test.expectedQ,
+			cmp.AllowUnexported(*q, test.expectedQ),
+			cmpopts.IgnoreTypes(test.expectedQ.messages),
+		)
 		if diff != "" {
 			t.Errorf("Queue doesn't match. %s. %s", test.description, diff)
 			continue
@@ -622,7 +628,7 @@ func TestInflightHandler(t *testing.T) {
 		return
 	}
 	msg10.deadline = time.Now().UTC().Add(time.Second * -10)
-	q1.inflightMessages.Append(msg10)
+	q1.inflightMessages.PushBack(msg10)
 
 	msg11, err := newMessage(ctl, []byte("body11"), 0)
 	if err != nil {
@@ -630,7 +636,7 @@ func TestInflightHandler(t *testing.T) {
 		return
 	}
 	msg11.deadline = time.Now().UTC().Add(time.Second * 10)
-	q1.inflightMessages.Append(msg11)
+	q1.inflightMessages.PushBack(msg11)
 
 	msg20, err := newMessage(ctl, []byte("body20"), 0)
 	if err != nil {
@@ -640,7 +646,7 @@ func TestInflightHandler(t *testing.T) {
 	msg20.deadline = time.Now().UTC().Add(time.Second * -10)
 	// mock creation date to force it to be dropped
 	msg20.createdTimestamp = time.Now().UTC().Add(time.Second * -61)
-	q2.inflightMessages.Append(msg20)
+	q2.inflightMessages.PushBack(msg20)
 
 	msg21, err := newMessage(ctl, []byte("body21"), 0)
 	if err != nil {
@@ -648,21 +654,21 @@ func TestInflightHandler(t *testing.T) {
 		return
 	}
 	msg21.deadline = time.Now().UTC().Add(time.Second * -10)
-	q2.inflightMessages.Append(msg21)
+	q2.inflightMessages.PushBack(msg21)
 
 	ctl.handleInflight()
 
 	// test
-	if q1.inflightMessages.Size != 1 {
-		t.Errorf("expects 1 inflight message, got %d for 'queue1'", q1.inflightMessages.Size)
+	if q1.inflightMessages.Len() != 1 {
+		t.Errorf("expects 1 inflight message, got %d for 'queue1'", q1.inflightMessages.Len())
 	}
 
-	if q2.inflightMessages.Size != 0 {
-		t.Errorf("expects 0 inflight messages, got %d for 'queue2'", q2.inflightMessages.Size)
+	if q2.inflightMessages.Len() != 0 {
+		t.Errorf("expects 0 inflight messages, got %d for 'queue2'", q2.inflightMessages.Len())
 	}
 
-	if q2.messages.Size != 1 {
-		t.Errorf("expects 1 queued messages, got %d for 'queue2'", q2.messages.Size)
+	if q2.messages.Len() != 1 {
+		t.Errorf("expects 1 queued messages, got %d for 'queue2'", q2.messages.Len())
 	}
 }
 
@@ -704,14 +710,14 @@ func TestRetentionHandler(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	q1.messages.Append(msg1)
+	q1.messages.PushBack(msg1)
 
 	msg20, err := newMessage(ctl, []byte("body20"), 0)
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	q2.messages.Append(msg20)
+	q2.messages.PushBack(msg20)
 
 	msg21, err := newMessage(ctl, []byte("body21"), 0)
 	if err != nil {
@@ -720,16 +726,16 @@ func TestRetentionHandler(t *testing.T) {
 	}
 	// mock creation date to force it to be dropped
 	msg21.createdTimestamp = time.Now().UTC().Add(time.Second * -61)
-	q2.messages.Append(msg21)
+	q2.messages.PushBack(msg21)
 
 	ctl.handleRetention()
 
 	// test
-	if q1.messages.Size != 1 {
-		t.Errorf("expects 1 queued message, got %d for 'queue1'", q1.messages.Size)
+	if q1.messages.Len() != 1 {
+		t.Errorf("expects 1 queued message, got %d for 'queue1'", q1.messages.Len())
 	}
 
-	if q2.messages.Size != 1 {
-		t.Errorf("expects 1 queued message, got %d for 'queue2'", q2.messages.Size)
+	if q2.messages.Len() != 1 {
+		t.Errorf("expects 1 queued message, got %d for 'queue2'", q2.messages.Len())
 	}
 }

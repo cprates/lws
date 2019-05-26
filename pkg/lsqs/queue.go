@@ -1,13 +1,10 @@
 package lsqs
 
 import (
-	"sort"
 	"time"
 
-	"github.com/cprates/lws/pkg/datastructs"
+	"github.com/cprates/lws/pkg/list"
 )
-
-type inflightArray []*message
 
 type queue struct {
 	name                  string
@@ -15,8 +12,8 @@ type queue struct {
 	url                   string
 	createdTimestamp      int64
 	lastModifiedTimestamp int64
-	messages              *datastructs.SList
-	inflightMessages      *datastructs.SList // Messages stored here are sorted by their deadline
+	messages              *list.List
+	inflightMessages      *list.List // Messages stored here are sorted by deadline
 
 	// Configurable
 	delaySeconds                  uint32
@@ -34,32 +31,31 @@ type queue struct {
 
 func (q *queue) takeUpTo(n int) (msgs []*message) {
 
-	nodes := q.messages.TakeUpToN(n)
-	for _, n := range nodes {
-		msgs = append(msgs, n.Data.(*message))
+	for i := 0; i < n; i++ {
+		elem := q.messages.PullFront()
+		if elem == nil {
+			break
+		}
+
+		msgs = append(msgs, elem.(*message))
 	}
 
 	return
 }
 
-func (q *queue) setInflight(messages inflightArray) {
+func (q *queue) setInflight(messages []*message) {
 
 	if len(messages) == 0 {
 		return
 	}
 
-	sort.Sort(messages)
-
-	var nodes []*datastructs.Node
+	elements := list.New()
 	for _, msg := range messages {
 		msg.received++
 		msg.deadline = time.Now().UTC().Add(time.Duration(q.visibilityTimeout) * time.Second)
-		nodes = append(nodes, &datastructs.Node{Data: msg})
+		elements.PushBack(msg)
 	}
 
-	q.inflightMessages.AppendN(nodes)
+	q.inflightMessages.PushFrontList(elements)
+	q.inflightMessages.Sort(deadlineCmp)
 }
-
-func (ia inflightArray) Len() int           { return len(ia) }
-func (ia inflightArray) Swap(i, j int)      { ia[i], ia[j] = ia[j], ia[i] }
-func (ia inflightArray) Less(i, j int) bool { return ia[i].deadline.Before(ia[j].deadline) }

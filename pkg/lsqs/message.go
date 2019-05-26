@@ -58,3 +58,7 @@ func newMessage(owner *lSqs, body []byte, delaySeconds time.Duration) (msg *mess
 
 	return
 }
+
+func deadlineCmp(i, j interface{}) int {
+	return i.(*message).deadline.Second() - j.(*message).deadline.Second()
+}
