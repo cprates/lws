@@ -19,7 +19,12 @@ type AwsCli struct {
 	services map[string]dispatchFunc
 }
 
-type dispatchFunc func(ctx context.Context, reqID string, params map[string]string) common.Result
+type dispatchFunc func(
+	ctx context.Context,
+	reqID string,
+	params map[string]string,
+	attributes map[string]string,
+) common.Result
 
 // NewAwsCli creates a new empty AWS CLI compatible interface to serve HTTP requests.
 func NewAwsCli() AwsCli {
@@ -121,7 +126,8 @@ func (a AwsCli) Dispatcher() http.HandlerFunc {
 		}
 
 		ctx := context.WithValue(context.Background(), common.ReqIDKey{}, reqID)
-		res := dispatchF(ctx, reqID, flattAndParse(params))
+		p, a := flattAndParse(params)
+		res := dispatchF(ctx, reqID, p, a)
 		if res.Status != 200 {
 			log.Debugln("Failed serving req", reqID, res.Err)
 			onLwsErr(w, res)
@@ -138,31 +144,33 @@ func (a AwsCli) Dispatcher() http.HandlerFunc {
 
 // flattAndParse flatten the given map, and parse attributes, converting them into key
 // pair elements.
-func flattAndParse(params map[string][]string) (res map[string]string) {
+func flattAndParse(rawParams map[string][]string) (params, attrs map[string]string) {
 
-	res = map[string]string{}
+	params = map[string]string{}
+	attrs = map[string]string{}
 
-	for k, v := range params {
+	for k, v := range rawParams {
 		if isAttrArray(k) {
-			res[v[0]] = ""
+			attrs[v[0]] = ""
 			continue
 		}
 
 		if !isAttrMap("Name", k) {
 			if !isAttrMap("Value", k) {
-				res[k] = v[0]
+				// regular attributes
+				params[k] = v[0]
 			}
 			continue
 		}
 		// has pair?
 		parts := strings.Split(k, ".")
 		attrValKey := "Attribute." + parts[1] + ".Value"
-		attrVal, ok := params[attrValKey]
+		attrVal, ok := rawParams[attrValKey]
 		if !ok {
 			continue
 		}
 
-		res[v[0]] = attrVal[0]
+		attrs[v[0]] = attrVal[0]
 	}
 
 	return

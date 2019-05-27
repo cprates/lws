@@ -41,6 +41,8 @@ type request struct {
 	id     string
 	// request params
 	params map[string]string
+	// request attributes
+	attributes map[string]string
 	// channel to read the request result from
 	resC chan *reqResult
 }
@@ -300,7 +302,7 @@ func (l *lSqs) createQueue(req request) {
 	}
 
 	// set properties
-	delaySeconds, err := params.ValUI32("DelaySeconds", 0, 0, 900, req.params)
+	delaySeconds, err := params.ValUI32("DelaySeconds", 0, 0, 900, req.attributes)
 	if err != nil {
 		log.Debugln(err)
 		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
@@ -308,7 +310,13 @@ func (l *lSqs) createQueue(req request) {
 	}
 	q.delaySeconds = delaySeconds
 
-	maximumMessageSize, err := params.ValUI32("MaximumMessageSize", 262144, 1024, 262144, req.params)
+	maximumMessageSize, err := params.ValUI32(
+		"MaximumMessageSize",
+		262144,
+		1024,
+		262144,
+		req.attributes,
+	)
 	if err != nil {
 		log.Debugln(err)
 		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
@@ -317,7 +325,7 @@ func (l *lSqs) createQueue(req request) {
 	q.maximumMessageSize = maximumMessageSize
 
 	messageRetentionPeriod, err := params.ValUI32(
-		"MessageRetentionPeriod", 345600, 60, 1209600, req.params,
+		"MessageRetentionPeriod", 345600, 60, 1209600, req.attributes,
 	)
 	if err != nil {
 		log.Debugln(err)
@@ -327,7 +335,7 @@ func (l *lSqs) createQueue(req request) {
 	q.messageRetentionPeriod = messageRetentionPeriod
 
 	receiveMessageWaitTimeSeconds, err := params.ValUI32(
-		"ReceiveMessageWaitTimeSeconds", 0, 0, 20, req.params,
+		"ReceiveMessageWaitTimeSeconds", 0, 0, 20, req.attributes,
 	)
 	if err != nil {
 		log.Debugln(err)
@@ -338,7 +346,7 @@ func (l *lSqs) createQueue(req request) {
 
 	var dlta string
 	var mrc uint32
-	if p := params.ValString("RedrivePolicy", req.params); p != "" {
+	if p := params.ValString("RedrivePolicy", req.attributes); p != "" {
 		dlta, mrc, err = validateRedrivePolicy(p, l.queues)
 		if err != nil {
 			log.Debugln(err)
@@ -352,7 +360,7 @@ func (l *lSqs) createQueue(req request) {
 	q.deadLetterTargetArn = dlta
 	q.maxReceiveCount = mrc
 
-	visibilityTimeout, err := params.ValUI32("VisibilityTimeout", 30, 0, 43200, req.params)
+	visibilityTimeout, err := params.ValUI32("VisibilityTimeout", 30, 0, 43200, req.attributes)
 	if err != nil {
 		log.Debugln(err)
 		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
@@ -360,7 +368,7 @@ func (l *lSqs) createQueue(req request) {
 	}
 	q.visibilityTimeout = visibilityTimeout
 
-	fifoQueue, err := params.ValBool("FifoQueue", false, req.params)
+	fifoQueue, err := params.ValBool("FifoQueue", false, req.attributes)
 	if err != nil {
 		log.Debugln(err)
 		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
@@ -368,7 +376,11 @@ func (l *lSqs) createQueue(req request) {
 	}
 	q.fifoQueue = fifoQueue
 
-	contentBasedDeduplication, err := params.ValBool("ContentBasedDeduplication", false, req.params)
+	contentBasedDeduplication, err := params.ValBool(
+		"ContentBasedDeduplication",
+		false,
+		req.attributes,
+	)
 	if err != nil {
 		log.Debugln(err)
 		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
@@ -415,7 +427,7 @@ func (l *lSqs) getQueueAttributes(req request) {
 	}
 
 	var toGet []string
-	if _, all := req.params["All"]; all {
+	if _, all := req.attributes["All"]; all {
 		toGet = []string{
 			"ApproximateNumberOfMessages", "ApproximateNumberOfMessagesDelayed",
 			"ApproximateNumberOfMessagesNotVisible", "CreatedTimestamp", "DelaySeconds",
@@ -424,7 +436,7 @@ func (l *lSqs) getQueueAttributes(req request) {
 			"ContentBasedDeduplication",
 		}
 	} else {
-		for k := range req.params {
+		for k := range req.attributes {
 			toGet = append(toGet, k)
 		}
 	}
@@ -626,12 +638,8 @@ func (l *lSqs) setQueueAttributes(req request) {
 		return
 	}
 
-	// TODO: separate attrs from params to fix this mess...
-	delete(req.params, "QueueUrl")
-	delete(req.params, "Action")
-	delete(req.params, "Version")
 	var err error
-	for attr, val := range req.params {
+	for attr, val := range req.attributes {
 		switch attr {
 		case "DelaySeconds":
 			delaySeconds, e := params.UI32(val, 0, 900)

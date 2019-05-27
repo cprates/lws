@@ -44,6 +44,7 @@ func TestCreateQueueAndProperties(t *testing.T) {
 		description string
 		qName       string
 		params      map[string]string
+		attrs       map[string]string
 		expectedQ   queue
 		expectedErr error
 	}{
@@ -53,6 +54,7 @@ func TestCreateQueueAndProperties(t *testing.T) {
 			map[string]string{
 				"QueueName": "queue1",
 			},
+			map[string]string{},
 			queue{
 				messages:                      list.New(),
 				inflightMessages:              list.New(),
@@ -77,7 +79,9 @@ func TestCreateQueueAndProperties(t *testing.T) {
 			"Tests if all queue's attributes are being correctly set",
 			"queue2",
 			map[string]string{
-				"QueueName":                     "queue2",
+				"QueueName": "queue2",
+			},
+			map[string]string{
 				"DelaySeconds":                  "900",
 				"MaximumMessageSize":            "1024",
 				"MessageRetentionPeriod":        "1209600",
@@ -111,7 +115,9 @@ func TestCreateQueueAndProperties(t *testing.T) {
 			"Tests DelaySeconds attribute upper limit",
 			"dummyQ",
 			map[string]string{
-				"QueueName":    "dummyQ",
+				"QueueName": "dummyQ",
+			},
+			map[string]string{
 				"DelaySeconds": "901",
 			},
 			queue{},
@@ -121,7 +127,9 @@ func TestCreateQueueAndProperties(t *testing.T) {
 			"Tests MaximumMessageSize attribute lower limit",
 			"dummyQ",
 			map[string]string{
-				"QueueName":          "dummyQ",
+				"QueueName": "dummyQ",
+			},
+			map[string]string{
 				"MaximumMessageSize": "1023",
 			},
 			queue{},
@@ -131,7 +139,9 @@ func TestCreateQueueAndProperties(t *testing.T) {
 			"Tests MaximumMessageSize attribute upper limit",
 			"dummyQ",
 			map[string]string{
-				"QueueName":          "dummyQ",
+				"QueueName": "dummyQ",
+			},
+			map[string]string{
 				"MaximumMessageSize": "262145",
 			},
 			queue{},
@@ -141,7 +151,9 @@ func TestCreateQueueAndProperties(t *testing.T) {
 			"Tests MessageRetentionPeriod attribute lower limit",
 			"dummyQ",
 			map[string]string{
-				"QueueName":              "dummyQ",
+				"QueueName": "dummyQ",
+			},
+			map[string]string{
 				"MessageRetentionPeriod": "59",
 			},
 			queue{},
@@ -151,7 +163,9 @@ func TestCreateQueueAndProperties(t *testing.T) {
 			"Tests MessageRetentionPeriod attribute upper limit",
 			"dummyQ",
 			map[string]string{
-				"QueueName":              "dummyQ",
+				"QueueName": "dummyQ",
+			},
+			map[string]string{
 				"MessageRetentionPeriod": "1209601",
 			},
 			queue{},
@@ -161,7 +175,9 @@ func TestCreateQueueAndProperties(t *testing.T) {
 			"Tests ReceiveMessageWaitTimeSeconds attribute upper limit",
 			"dummyQ",
 			map[string]string{
-				"QueueName":                     "dummyQ",
+				"QueueName": "dummyQ",
+			},
+			map[string]string{
 				"ReceiveMessageWaitTimeSeconds": "21",
 			},
 			queue{},
@@ -171,7 +187,9 @@ func TestCreateQueueAndProperties(t *testing.T) {
 			"Tests VisibilityTimeout attribute upper limit",
 			"dummyQ",
 			map[string]string{
-				"QueueName":         "dummyQ",
+				"QueueName": "dummyQ",
+			},
+			map[string]string{
 				"VisibilityTimeout": "43201",
 			},
 			queue{},
@@ -181,7 +199,7 @@ func TestCreateQueueAndProperties(t *testing.T) {
 
 	for _, test := range testsSet {
 
-		req := newReq("CreateQueue", "a", test.params)
+		req := newReq("CreateQueue", "a", test.params, test.attrs)
 
 		go func() {
 			ctl.createQueue(req)
@@ -240,18 +258,23 @@ func TestGetQueueAttributes(t *testing.T) {
 		queues:    map[string]*queue{},
 	}
 
-	req := newReq("CreateQueue", "b", map[string]string{"QueueName": "deatletter"})
+	req := newReq(
+		"CreateQueue",
+		"b",
+		map[string]string{"QueueName": "deadletter"},
+		map[string]string{},
+	)
 	go func() {
 		ctl.createQueue(req)
 	}()
 	<-req.resC
-	dlq := queueByName("deatletter", ctl.queues)
+	dlq := queueByName("deadletter", ctl.queues)
 
 	req = newReq(
 		"CreateQueue",
 		"a",
+		map[string]string{"QueueName": "queue1"},
 		map[string]string{
-			"QueueName":     "queue1",
 			"RedrivePolicy": `{"deadLetterTargetArn":"` + dlq.lrn + `","maxReceiveCount":"1000"}`,
 		},
 	)
@@ -286,6 +309,7 @@ func TestGetQueueAttributes(t *testing.T) {
 		description   string
 		qName         string
 		params        map[string]string
+		attrs         map[string]string
 		expectedAttrs map[string]string
 		expectedErr   error
 	}{
@@ -294,7 +318,9 @@ func TestGetQueueAttributes(t *testing.T) {
 			"queue1",
 			map[string]string{
 				"QueueUrl": q.url,
-				"All":      "",
+			},
+			map[string]string{
+				"All": "",
 			},
 			map[string]string{
 				"DelaySeconds":                          "0",
@@ -317,7 +343,9 @@ func TestGetQueueAttributes(t *testing.T) {
 			"queue1",
 			map[string]string{
 				"QueueUrl": "abc",
-				"All":      "",
+			},
+			map[string]string{
+				"All": "",
 			},
 			nil,
 			ErrNonExistentQueue,
@@ -325,7 +353,7 @@ func TestGetQueueAttributes(t *testing.T) {
 	}
 
 	for _, test := range testsSet {
-		req = newReq("GetQueueAttributes", "c", test.params)
+		req = newReq("GetQueueAttributes", "c", test.params, test.attrs)
 		go func() {
 			ctl.getQueueAttributes(req)
 		}()
@@ -373,17 +401,23 @@ func TestSetQueueAttributes(t *testing.T) {
 		queues:    map[string]*queue{},
 	}
 
-	req := newReq("CreateQueue", "b", map[string]string{"QueueName": "deatletter"})
+	req := newReq(
+		"CreateQueue",
+		"b",
+		map[string]string{"QueueName": "deadletter"},
+		map[string]string{},
+	)
 	go func() {
 		ctl.createQueue(req)
 	}()
 	<-req.resC
-	dlq := queueByName("deatletter", ctl.queues)
+	dlq := queueByName("deadletter", ctl.queues)
 
 	req = newReq(
 		"CreateQueue",
 		"a",
 		map[string]string{"QueueName": "queue1"},
+		map[string]string{},
 	)
 	go func() {
 		ctl.createQueue(req)
@@ -396,6 +430,7 @@ func TestSetQueueAttributes(t *testing.T) {
 		description   string
 		qName         string
 		params        map[string]string
+		attrs         map[string]string
 		expectedAttrs *queue
 		expectedErr   error
 	}{
@@ -403,7 +438,9 @@ func TestSetQueueAttributes(t *testing.T) {
 			"Sets all supported attributes",
 			"queue1",
 			map[string]string{
-				"QueueUrl":                      q.url,
+				"QueueUrl": q.url,
+			},
+			map[string]string{
 				"DelaySeconds":                  "900",
 				"MaximumMessageSize":            "262144",
 				"MessageRetentionPeriod":        "1209600",
@@ -426,7 +463,9 @@ func TestSetQueueAttributes(t *testing.T) {
 			"Sets attributes of an non-existing queue",
 			"queue1",
 			map[string]string{
-				"QueueUrl":     "abc",
+				"QueueUrl": "abc",
+			},
+			map[string]string{
 				"DelaySeconds": "0",
 			},
 			nil,
@@ -436,7 +475,9 @@ func TestSetQueueAttributes(t *testing.T) {
 			"Tests upper limit for DelaySeconds",
 			"queue1",
 			map[string]string{
-				"QueueUrl":     q.url,
+				"QueueUrl": q.url,
+			},
+			map[string]string{
 				"DelaySeconds": "901",
 			},
 			nil,
@@ -446,7 +487,9 @@ func TestSetQueueAttributes(t *testing.T) {
 			"Tests lower limit for MaximumMessageSize",
 			"queue1",
 			map[string]string{
-				"QueueUrl":           q.url,
+				"QueueUrl": q.url,
+			},
+			map[string]string{
 				"MaximumMessageSize": "1023",
 			},
 			nil,
@@ -456,7 +499,9 @@ func TestSetQueueAttributes(t *testing.T) {
 			"Tests upper limit for MaximumMessageSize",
 			"queue1",
 			map[string]string{
-				"QueueUrl":           q.url,
+				"QueueUrl": q.url,
+			},
+			map[string]string{
 				"MaximumMessageSize": "262145",
 			},
 			nil,
@@ -466,7 +511,9 @@ func TestSetQueueAttributes(t *testing.T) {
 			"Tests lower limit for MessageRetentionPeriod",
 			"queue1",
 			map[string]string{
-				"QueueUrl":               q.url,
+				"QueueUrl": q.url,
+			},
+			map[string]string{
 				"MessageRetentionPeriod": "59",
 			},
 			nil,
@@ -476,7 +523,9 @@ func TestSetQueueAttributes(t *testing.T) {
 			"Tests upper limit for MessageRetentionPeriod",
 			"queue1",
 			map[string]string{
-				"QueueUrl":               q.url,
+				"QueueUrl": q.url,
+			},
+			map[string]string{
 				"MessageRetentionPeriod": "1209601",
 			},
 			nil,
@@ -486,7 +535,9 @@ func TestSetQueueAttributes(t *testing.T) {
 			"Tests upper limit for ReceiveMessageWaitTimeSeconds",
 			"queue1",
 			map[string]string{
-				"QueueUrl":                      q.url,
+				"QueueUrl": q.url,
+			},
+			map[string]string{
 				"ReceiveMessageWaitTimeSeconds": "21",
 			},
 			nil,
@@ -496,7 +547,9 @@ func TestSetQueueAttributes(t *testing.T) {
 			"Tests upper limit for VisibilityTimeout",
 			"queue1",
 			map[string]string{
-				"QueueUrl":          q.url,
+				"QueueUrl": q.url,
+			},
+			map[string]string{
 				"VisibilityTimeout": "43201",
 			},
 			nil,
@@ -507,7 +560,9 @@ func TestSetQueueAttributes(t *testing.T) {
 			"queue1",
 			map[string]string{
 				"QueueUrl": q.url,
-				"wtf":      "43201",
+			},
+			map[string]string{
+				"wtf": "43201",
 			},
 			nil,
 			ErrInvalidAttributeName,
@@ -516,7 +571,9 @@ func TestSetQueueAttributes(t *testing.T) {
 			"Tests error on invalid attribute value (1)",
 			"queue1",
 			map[string]string{
-				"QueueUrl":          q.url,
+				"QueueUrl": q.url,
+			},
+			map[string]string{
 				"VisibilityTimeout": "wtf",
 			},
 			nil,
@@ -526,7 +583,9 @@ func TestSetQueueAttributes(t *testing.T) {
 			"Tests error on invalid attribute value (2)",
 			"queue1",
 			map[string]string{
-				"QueueUrl":      q.url,
+				"QueueUrl": q.url,
+			},
+			map[string]string{
 				"RedrivePolicy": "wtf",
 			},
 			nil,
@@ -535,7 +594,7 @@ func TestSetQueueAttributes(t *testing.T) {
 	}
 
 	for _, test := range testsSet {
-		req = newReq("SetQueueAttributes", "c", test.params)
+		req = newReq("SetQueueAttributes", "c", test.params, test.attrs)
 		go func() {
 			ctl.setQueueAttributes(req)
 		}()
@@ -629,7 +688,12 @@ func TestInflightHandler(t *testing.T) {
 		queues:    map[string]*queue{},
 	}
 
-	req := newReq("CreateQueue", "a", map[string]string{"QueueName": "queue1"})
+	req := newReq(
+		"CreateQueue",
+		"a",
+		map[string]string{"QueueName": "queue1"},
+		map[string]string{},
+	)
 	go func() {
 		ctl.createQueue(req)
 	}()
@@ -640,6 +704,7 @@ func TestInflightHandler(t *testing.T) {
 		"CreateQueue",
 		"b",
 		map[string]string{"QueueName": "queue2", "MessageRetentionPeriod": "60"},
+		map[string]string{},
 	)
 	go func() {
 		ctl.createQueue(req)
@@ -712,6 +777,7 @@ func TestRetentionHandler(t *testing.T) {
 		"CreateQueue",
 		"a",
 		map[string]string{"QueueName": "queue1", "MessageRetentionPeriod": "60"},
+		map[string]string{},
 	)
 	go func() {
 		ctl.createQueue(req)
@@ -723,6 +789,7 @@ func TestRetentionHandler(t *testing.T) {
 		"CreateQueue",
 		"b",
 		map[string]string{"QueueName": "queue2", "MessageRetentionPeriod": "60"},
+		map[string]string{},
 	)
 	go func() {
 		ctl.createQueue(req)

@@ -36,24 +36,29 @@ func New(region, accountID, scheme, host string) *API {
 	}
 }
 
-func (a API) pushReq(action, reqID string, params map[string]string) *reqResult {
+func (a API) pushReq(action, reqID string, params, attributes map[string]string) *reqResult {
 
-	rq := newReq(action, reqID, params)
+	rq := newReq(action, reqID, params, attributes)
 	a.pushC <- rq
 	return <-rq.resC
 }
 
-func newReq(action, reqID string, params map[string]string) request {
+func newReq(action, reqID string, params, attributes map[string]string) request {
 	return request{
-		action: action,
-		id:     reqID,
-		params: params,
-		resC:   make(chan *reqResult),
+		action:     action,
+		id:         reqID,
+		params:     params,
+		attributes: attributes,
+		resC:       make(chan *reqResult),
 	}
 }
 
 // CreateQueue creates a new queue.
-func (a API) CreateQueue(ctx context.Context, params map[string]string) common.Result {
+func (a API) CreateQueue(
+	ctx context.Context,
+	params map[string]string,
+	attributes map[string]string,
+) common.Result {
 
 	reqID := ctx.Value(common.ReqIDKey{}).(string)
 
@@ -61,7 +66,7 @@ func (a API) CreateQueue(ctx context.Context, params map[string]string) common.R
 		return common.ErrMissingParamRes("QueueName is a required parameter", reqID)
 	}
 
-	res := a.pushReq("CreateQueue", reqID, params)
+	res := a.pushReq("CreateQueue", reqID, params, attributes)
 	if res.err != nil {
 		switch res.err {
 		case ErrAlreadyExists:
@@ -95,7 +100,11 @@ func (a API) CreateQueue(ctx context.Context, params map[string]string) common.R
 }
 
 // DeleteQueue deletes the specified queue on this instance.
-func (a API) DeleteQueue(ctx context.Context, params map[string]string) common.Result {
+func (a API) DeleteQueue(
+	ctx context.Context,
+	params map[string]string,
+	attributes map[string]string,
+) common.Result {
 
 	reqID := ctx.Value(common.ReqIDKey{}).(string)
 
@@ -103,7 +112,7 @@ func (a API) DeleteQueue(ctx context.Context, params map[string]string) common.R
 		return common.ErrMissingParamRes("QueueUrl is a required parameter", reqID)
 	}
 
-	res := a.pushReq("DeleteQueue", reqID, params)
+	res := a.pushReq("DeleteQueue", reqID, params, attributes)
 	if res.err != nil {
 		return common.ErrInternalErrorRes(res.err.Error(), reqID)
 	}
@@ -125,7 +134,11 @@ func (a API) DeleteQueue(ctx context.Context, params map[string]string) common.R
 }
 
 // GetQueueAttributes returns the requested attributes of an specified queue.
-func (a API) GetQueueAttributes(ctx context.Context, params map[string]string) common.Result {
+func (a API) GetQueueAttributes(
+	ctx context.Context,
+	params map[string]string,
+	attributes map[string]string,
+) common.Result {
 
 	reqID := ctx.Value(common.ReqIDKey{}).(string)
 
@@ -133,7 +146,7 @@ func (a API) GetQueueAttributes(ctx context.Context, params map[string]string) c
 		return common.ErrMissingParamRes("QueueUrl is a required parameter", reqID)
 	}
 
-	res := a.pushReq("GetQueueAttributes", reqID, params)
+	res := a.pushReq("GetQueueAttributes", reqID, params, attributes)
 	if res.err != nil {
 		switch res.err {
 		case ErrNonExistentQueue:
@@ -176,7 +189,11 @@ func (a API) GetQueueAttributes(ctx context.Context, params map[string]string) c
 }
 
 // GetQueueUrl returns the URL of an existing Amazon SQS queue.
-func (a API) GetQueueUrl(ctx context.Context, params map[string]string) common.Result {
+func (a API) GetQueueUrl(
+	ctx context.Context,
+	params map[string]string,
+	attributes map[string]string,
+) common.Result {
 
 	reqID := ctx.Value(common.ReqIDKey{}).(string)
 
@@ -184,7 +201,7 @@ func (a API) GetQueueUrl(ctx context.Context, params map[string]string) common.R
 		return common.ErrMissingParamRes("QueueName is a required parameter", reqID)
 	}
 
-	res := a.pushReq("GetQueueUrl", reqID, params)
+	res := a.pushReq("GetQueueUrl", reqID, params, attributes)
 	if res.err != nil {
 		switch res.err {
 		case ErrNonExistentQueue:
@@ -215,11 +232,15 @@ func (a API) GetQueueUrl(ctx context.Context, params map[string]string) common.R
 }
 
 // ListQueues return a datastructs of existing queues on this instance.
-func (a API) ListQueues(ctx context.Context, params map[string]string) common.Result {
+func (a API) ListQueues(
+	ctx context.Context,
+	params map[string]string,
+	attributes map[string]string,
+) common.Result {
 
 	reqID := ctx.Value(common.ReqIDKey{}).(string)
 
-	res := a.pushReq("ListQueues", reqID, params)
+	res := a.pushReq("ListQueues", reqID, params, attributes)
 	if res.err != nil {
 		return common.ErrInternalErrorRes(res.err.Error(), reqID)
 	}
@@ -245,7 +266,11 @@ func (a API) ListQueues(ctx context.Context, params map[string]string) common.Re
 }
 
 // ReceiveMessage return a datastructs of messages from the specified queue.
-func (a API) ReceiveMessage(ctx context.Context, params map[string]string) common.Result {
+func (a API) ReceiveMessage(
+	ctx context.Context,
+	params map[string]string,
+	attributes map[string]string,
+) common.Result {
 
 	reqID := ctx.Value(common.ReqIDKey{}).(string)
 
@@ -253,7 +278,7 @@ func (a API) ReceiveMessage(ctx context.Context, params map[string]string) commo
 		return common.ErrMissingParamRes("QueueUrl is a required parameter", reqID)
 	}
 
-	res := a.pushReq("ReceiveMessage", reqID, params)
+	res := a.pushReq("ReceiveMessage", reqID, params, attributes)
 	if res.err != nil {
 		switch res.err {
 		case ErrInvalidParameterValue:
@@ -302,7 +327,11 @@ func (a API) ReceiveMessage(ctx context.Context, params map[string]string) commo
 }
 
 // SendMessage a message to the specified queue.
-func (a API) SendMessage(ctx context.Context, params map[string]string) common.Result {
+func (a API) SendMessage(
+	ctx context.Context,
+	params map[string]string,
+	attributes map[string]string,
+) common.Result {
 
 	reqID := ctx.Value(common.ReqIDKey{}).(string)
 
@@ -319,7 +348,7 @@ func (a API) SendMessage(ctx context.Context, params map[string]string) common.R
 	}
 	params["MessageBody"] = escaped
 
-	res := a.pushReq("SendMessage", reqID, params)
+	res := a.pushReq("SendMessage", reqID, params, attributes)
 	if res.err != nil {
 		switch res.err {
 		case ErrInvalidParameterValue:
@@ -356,7 +385,11 @@ func (a API) SendMessage(ctx context.Context, params map[string]string) common.R
 }
 
 // SetQueueAttributes sets the given attributes to the specified queue.
-func (a API) SetQueueAttributes(ctx context.Context, params map[string]string) common.Result {
+func (a API) SetQueueAttributes(
+	ctx context.Context,
+	params map[string]string,
+	attributes map[string]string,
+) common.Result {
 
 	reqID := ctx.Value(common.ReqIDKey{}).(string)
 
@@ -364,7 +397,7 @@ func (a API) SetQueueAttributes(ctx context.Context, params map[string]string) c
 		return common.ErrMissingParamRes("QueueUrl is a required parameter", reqID)
 	}
 
-	res := a.pushReq("SetQueueAttributes", reqID, params)
+	res := a.pushReq("SetQueueAttributes", reqID, params, attributes)
 	if res.err != nil {
 		switch res.err {
 		case ErrInvalidAttributeName:

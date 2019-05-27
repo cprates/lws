@@ -30,7 +30,12 @@ func (a AwsCli) InstallSNS(region, accountID, scheme, host string) {
 	a.regService("sns", snsDispatcher)
 }
 
-func snsDispatcher(ctx context.Context, reqID string, params map[string]string) common.Result {
+func snsDispatcher(
+	ctx context.Context,
+	reqID string,
+	params map[string]string,
+	attributes map[string]string,
+) common.Result {
 
 	action := params["Action"]
 	actionM, ok := snsAction[action]
@@ -42,6 +47,7 @@ func snsDispatcher(ctx context.Context, reqID string, params map[string]string) 
 	input := []reflect.Value{
 		reflect.ValueOf(ctx),
 		reflect.ValueOf(params),
+		reflect.ValueOf(attributes),
 	}
 
 	rv := actionM.Call(input)

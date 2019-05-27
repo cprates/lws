@@ -76,7 +76,11 @@ func (a API) pushReq(action, reqID string, data map[string]string) common.Result
 //	regAction("Unsubscribe", notImplemented)
 
 // CreateTopic creates a new topic.
-func (a API) CreateTopic(ctx context.Context, params map[string]string) common.Result {
+func (a API) CreateTopic(
+	ctx context.Context,
+	params map[string]string,
+	attributes map[string]string,
+) common.Result {
 
 	reqID := "REQ-NOT-PRESENT" // TODO
 
