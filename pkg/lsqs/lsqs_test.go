@@ -261,6 +261,26 @@ func TestGetQueueAttributes(t *testing.T) {
 	<-req.resC
 
 	q := queueByName("queue1", ctl.queues)
+	msg, err := newMessage(ctl, []byte("body"), 0, 60*time.Second)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	q.messages.PushBack(msg)
+	// inflight
+	msgInflight, err := newMessage(ctl, []byte("body"), 0, 60*time.Second)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	q.inflightMessages.PushBack(msgInflight)
+	// delayed
+	msgDelayed, err := newMessage(ctl, []byte("body"), 0, 60*time.Second)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	q.delayedMessages.PushBack(msgDelayed)
 
 	testsSet := []struct {
 		description   string
@@ -276,17 +296,19 @@ func TestGetQueueAttributes(t *testing.T) {
 				"QueueUrl": q.url,
 				"All":      "",
 			},
-
 			map[string]string{
-				"DelaySeconds":                  "0",
-				"MaximumMessageSize":            "262144",
-				"MessageRetentionPeriod":        "345600",
-				"ReceiveMessageWaitTimeSeconds": "0",
-				"RedrivePolicy":                 `{"DeadLetterTargetArn":"` + dlq.lrn + `","MaxReceiveCount":"1000"}`,
-				"VisibilityTimeout":             "30",
-				"QueueArn":                      q.lrn,
-				"CreatedTimestamp":              strconv.FormatInt(q.createdTimestamp, 10),
-				"LastModifiedTimestamp":         strconv.FormatInt(q.createdTimestamp, 10),
+				"DelaySeconds":                          "0",
+				"MaximumMessageSize":                    "262144",
+				"MessageRetentionPeriod":                "345600",
+				"ReceiveMessageWaitTimeSeconds":         "0",
+				"RedrivePolicy":                         `{"DeadLetterTargetArn":"` + dlq.lrn + `","MaxReceiveCount":"1000"}`,
+				"VisibilityTimeout":                     "30",
+				"QueueArn":                              q.lrn,
+				"CreatedTimestamp":                      strconv.FormatInt(q.createdTimestamp, 10),
+				"LastModifiedTimestamp":                 strconv.FormatInt(q.createdTimestamp, 10),
+				"ApproximateNumberOfMessages":           "1",
+				"ApproximateNumberOfMessagesDelayed":    "1",
+				"ApproximateNumberOfMessagesNotVisible": "1",
 			},
 			nil,
 		},

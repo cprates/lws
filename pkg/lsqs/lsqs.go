@@ -433,11 +433,11 @@ func (l *lSqs) getQueueAttributes(req request) {
 	for _, attr := range toGet {
 		switch attr {
 		case "ApproximateNumberOfMessages":
-			// TODO
+			qAttrs[attr] = strconv.FormatUint(uint64(q.messages.Len()), 10)
 		case "ApproximateNumberOfMessagesDelayed":
-			// TODO
+			qAttrs[attr] = strconv.FormatUint(uint64(q.delayedMessages.Len()), 10)
 		case "ApproximateNumberOfMessagesNotVisible":
-			// TODO
+			qAttrs[attr] = strconv.FormatUint(uint64(q.inflightMessages.Len()), 10)
 		case "CreatedTimestamp":
 			qAttrs[attr] = strconv.FormatInt(q.createdTimestamp, 10)
 		case "DelaySeconds":
