@@ -255,8 +255,12 @@ func (a API) ReceiveMessage(ctx context.Context, params map[string]string) commo
 
 	res := a.pushReq("ReceiveMessage", reqID, params)
 	if res.err != nil {
-
-		return common.ErrInternalErrorRes(res.err.Error(), reqID)
+		switch res.err {
+		case ErrInvalidParameterValue:
+			return common.ErrInvalidParameterValueRes(res.errData.(string), reqID)
+		default:
+			return common.ErrInternalErrorRes(res.err.Error(), reqID)
+		}
 	}
 
 	type Message struct {

@@ -62,6 +62,7 @@ func (l *lSqs) Process(reqC <-chan request, stopC <-chan struct{}) {
 	inflightTick := time.NewTicker(250 * time.Millisecond)
 	retentionTick := time.NewTicker(500 * time.Millisecond)
 	delayTick := time.NewTicker(250 * time.Millisecond)
+	longPollTick := time.NewTicker(500 * time.Millisecond)
 
 forloop:
 	for {
@@ -94,6 +95,8 @@ forloop:
 			l.handleRetention()
 		case <-delayTick.C:
 			l.handleDelayed()
+		case <-longPollTick.C:
+			l.handleLongPoll()
 		case <-stopC:
 			break forloop
 		}
@@ -102,6 +105,8 @@ forloop:
 	log.Println("Shutting down LSQS...")
 	inflightTick.Stop()
 	retentionTick.Stop()
+	delayTick.Stop()
+	longPollTick.Stop()
 }
 
 func (l *lSqs) handleInflight() {
@@ -178,6 +183,47 @@ func (l *lSqs) handleDelayed() {
 	}
 }
 
+func (l *lSqs) handleLongPoll() {
+
+	now := time.Now().UTC()
+	for _, queue := range l.queues {
+		var servedOrExpired []*list.Element
+		for elem := queue.longPollQueue.Front(); elem != nil; elem = elem.Next() {
+			req := elem.Value.(*longPollRequest)
+			if req.deadline.Before(now) {
+				log.Debugln(
+					"LongPoll waiter with request", req.originalReq.id,
+					"has expired on queue", queue.url,
+				)
+				req.originalReq.resC <- &reqResult{data: []*message{}}
+				servedOrExpired = append(servedOrExpired, elem)
+				continue
+			}
+
+			// TODO: This is ok because for now there is only one instance running.
+			//  After implementing the support for multiple instances, the sync between
+			//  instances must be assured
+			msgs := queue.takeUpTo(req.maxNumberOfMessages)
+			if len(msgs) == 0 {
+				// no more messages to read but still need to check for expired deadlines
+				// Doing this means that one waiter may not get any messages but the next one does
+				continue
+			}
+
+			log.Debugln("Serving LongPoll request", req.originalReq.id, "on queue", queue.url)
+
+			queue.setInflight(msgs)
+			req.originalReq.resC <- &reqResult{data: msgs}
+			servedOrExpired = append(servedOrExpired, elem)
+		}
+
+		// remove served or expired waiters
+		for _, elem := range servedOrExpired {
+			queue.longPollQueue.Remove(elem)
+		}
+	}
+}
+
 func validateRedrivePolicy(
 	val string,
 	queues map[string]*queue,
@@ -239,6 +285,7 @@ func (l *lSqs) createQueue(req request) {
 		messages:              list.New(),
 		inflightMessages:      list.New(),
 		delayedMessages:       list.New(),
+		longPollQueue:         list.New(),
 	}
 
 	log.Debugln("Creating new queue", url)
@@ -493,16 +540,14 @@ func (l *lSqs) receiveMessage(req request) {
 
 	messages := q.takeUpTo(int(maxNumberOfMessages))
 
-	// not long poll
-	if waitTimeSeconds == 0 {
+	if len(messages) > 0 || waitTimeSeconds == 0 {
 		// move messages to inflight queue
 		q.setInflight(messages)
 		req.resC <- &reqResult{data: messages}
 		return
 	}
 
-	// long poll goes here!
-	log.Fatal("LONG POLL NOT YET IMPLEMENTED!")
+	q.setOnWait(&req, int(maxNumberOfMessages), time.Duration(waitTimeSeconds)*time.Second)
 }
 
 func (l *lSqs) sendMessage(req request) {
@@ -551,7 +596,7 @@ func (l *lSqs) sendMessage(req request) {
 	if delaySeconds == 0 {
 		q.messages.PushBack(msg)
 	} else {
-		q.setDelayed(msg, time.Duration(delaySeconds))
+		q.setDelayed(msg, time.Duration(delaySeconds)*time.Second)
 	}
 
 	log.Debugln(

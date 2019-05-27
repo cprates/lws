@@ -15,6 +15,7 @@ type queue struct {
 	messages              *list.List
 	inflightMessages      *list.List // Messages stored here are sorted by deadline
 	delayedMessages       *list.List // Messages stored here are sorted by deadline
+	longPollQueue         *list.List
 
 	// Configurable
 	delaySeconds                  uint32
@@ -28,6 +29,12 @@ type queue struct {
 	// FIFO
 	fifoQueue                 bool
 	contentBasedDeduplication bool
+}
+
+type longPollRequest struct {
+	originalReq         *request
+	deadline            time.Time
+	maxNumberOfMessages int
 }
 
 func (q *queue) takeUpTo(n int) (msgs []*message) {
@@ -63,7 +70,18 @@ func (q *queue) setInflight(messages []*message) {
 
 func (q *queue) setDelayed(msg *message, delaySeconds time.Duration) {
 
-	msg.deadline = time.Now().UTC().Add(delaySeconds * time.Second)
+	msg.deadline = time.Now().UTC().Add(delaySeconds)
 	q.delayedMessages.PushFront(msg)
 	q.delayedMessages.Sort(deadlineCmp)
+}
+
+func (q *queue) setOnWait(originalReq *request, uptoMessages int, waitSeconds time.Duration) {
+
+	req := &longPollRequest{
+		originalReq:         originalReq,
+		deadline:            time.Now().UTC().Add(waitSeconds),
+		maxNumberOfMessages: uptoMessages,
+	}
+
+	q.longPollQueue.PushBack(req)
 }
