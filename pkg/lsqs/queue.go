@@ -3,6 +3,8 @@ package lsqs
 import (
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/cprates/lws/pkg/list"
 )
 
@@ -37,6 +39,26 @@ type longPollRequest struct {
 	maxNumberOfMessages int
 }
 
+func (q *queue) deleteMessage(receiptHandle string) bool {
+
+	for e := q.inflightMessages.Front(); e != nil; e = e.Next() {
+		if e.Value.(*message).receiptHandle == receiptHandle {
+			q.inflightMessages.Remove(e)
+			return true
+		}
+	}
+
+	for e := q.messages.Front(); e != nil; e = e.Next() {
+		msg := e.Value.(*message)
+		if msg.receiptHandle != "" && msg.receiptHandle == receiptHandle {
+			q.messages.Remove(e)
+			return true
+		}
+	}
+
+	return false
+}
+
 func (q *queue) takeUpTo(n int) (msgs []*message) {
 
 	for i := 0; i < n; i++ {
@@ -60,6 +82,12 @@ func (q *queue) setInflight(messages []*message) {
 	elements := list.New()
 	for _, msg := range messages {
 		msg.received++
+		// simplified version of an receipt handler
+		u, err := uuid.NewRandom()
+		if err != nil {
+			return
+		}
+		msg.receiptHandle = u.String()
 		msg.deadline = time.Now().UTC().Add(time.Duration(q.visibilityTimeout) * time.Second)
 		elements.PushBack(msg)
 	}

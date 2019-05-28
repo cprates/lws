@@ -99,6 +99,48 @@ func (a API) CreateQueue(
 	return common.SuccessRes(buf, reqID)
 }
 
+// DeleteMessage deletes a message with the given receipt handle on the specified queue.
+func (a API) DeleteMessage(
+	ctx context.Context,
+	params map[string]string,
+	attributes map[string]string,
+) common.Result {
+
+	reqID := ctx.Value(common.ReqIDKey{}).(string)
+
+	if _, present := params["QueueUrl"]; !present {
+		return common.ErrMissingParamRes("QueueUrl is a required parameter", reqID)
+	}
+	if _, present := params["ReceiptHandle"]; !present {
+		return common.ErrMissingParamRes("ReceiptHandle is a required parameter", reqID)
+	}
+
+	res := a.pushReq("DeleteMessage", reqID, params, attributes)
+	if res.err != nil {
+		switch res.err {
+		case ErrNonExistentQueue:
+			return ErrNonExistentQueueRes(reqID)
+		default:
+			return common.ErrInternalErrorRes(res.err.Error(), reqID)
+		}
+	}
+
+	xmlData := struct {
+		XMLName          xml.Name `xml:"DeleteMessageResponse"`
+		ResponseMetadata struct {
+			RequestID string `xml:"RequestId"`
+		}
+	}{}
+	xmlData.ResponseMetadata.RequestID = reqID
+
+	buf, err := xml.Marshal(xmlData)
+	if err != nil {
+		return common.ErrInternalErrorRes(err.Error(), reqID)
+	}
+
+	return common.SuccessRes(buf, reqID)
+}
+
 // DeleteQueue deletes the specified queue on this instance.
 func (a API) DeleteQueue(
 	ctx context.Context,

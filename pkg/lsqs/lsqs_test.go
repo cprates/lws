@@ -832,3 +832,151 @@ func TestRetentionHandler(t *testing.T) {
 		t.Errorf("expects 1 queued message, got %d for 'queue2'", q2.messages.Len())
 	}
 }
+
+// Tests the deletion of queue messages, inflight messages, non-existing messages and on a
+// non-existing queue.
+func TestDeleteMessage(t *testing.T) {
+
+	ctl := &lSqs{
+		accountID: "0000000000",
+		region:    "dummy-region",
+		scheme:    "http",
+		host:      "localhost:1234",
+		queues:    map[string]*queue{},
+	}
+
+	req := newReq(
+		"CreateQueue",
+		"a",
+		map[string]string{"QueueName": "queue1", "MessageRetentionPeriod": "60"},
+		map[string]string{},
+	)
+	go func() {
+		ctl.createQueue(req)
+	}()
+	<-req.resC
+	q1 := queueByName("queue1", ctl.queues)
+
+	createAndPushMsg := func(instance *lSqs, l *list.List, body, rHandle string) {
+		msg, err := newMessage(instance, []byte(body), 0, 60*time.Second)
+		if err != nil {
+			t.Fatal(err)
+			return
+		}
+		msg.receiptHandle = rHandle
+		l.PushBack(msg)
+	}
+
+	createAndPushMsg(ctl, q1.messages, "body10", "receiptHandle10")
+	createAndPushMsg(ctl, q1.messages, "body11", "")
+	createAndPushMsg(ctl, q1.messages, "body12", "receiptHandle12")
+	createAndPushMsg(ctl, q1.inflightMessages, "body20", "receiptHandle20")
+	createAndPushMsg(ctl, q1.inflightMessages, "body21", "receiptHandle21")
+
+	// Delete queued message
+	req = newReq(
+		"DeleteMessage",
+		"a",
+		map[string]string{
+			"QueueUrl":      q1.url,
+			"ReceiptHandle": "receiptHandle12",
+		},
+		map[string]string{},
+	)
+
+	go func() {
+		ctl.deleteMessage(req)
+	}()
+	res := <-req.resC
+
+	if res.err != nil {
+		t.Errorf(res.err.Error())
+	}
+
+	// test
+	if q1.messages.Len() != 2 {
+		t.Errorf("expects 2 queued message, got %d", q1.messages.Len())
+		return
+	}
+
+	// Delete inflight message
+	req = newReq(
+		"DeleteMessage",
+		"a",
+		map[string]string{
+			"QueueUrl":      q1.url,
+			"ReceiptHandle": "receiptHandle21",
+		},
+		map[string]string{},
+	)
+
+	go func() {
+		ctl.deleteMessage(req)
+	}()
+	res = <-req.resC
+
+	if res.err != nil {
+		t.Errorf(res.err.Error())
+		return
+	}
+
+	// test
+	if q1.inflightMessages.Len() != 1 {
+		t.Errorf("expects 1 queued message, got %d", q1.inflightMessages.Len())
+		return
+	}
+
+	// tries to delete non-existing receipt handle
+	req = newReq(
+		"DeleteMessage",
+		"a",
+		map[string]string{
+			"QueueUrl":      q1.url,
+			"ReceiptHandle": "wtf",
+		},
+		map[string]string{},
+	)
+
+	go func() {
+		ctl.deleteMessage(req)
+	}()
+	res = <-req.resC
+
+	if res.err != nil {
+		t.Errorf(res.err.Error())
+		return
+	}
+
+	// make sure no messages were deleted
+	if q1.messages.Len() != 2 {
+		t.Errorf("a queued message got deleted: %d", q1.messages.Len())
+		return
+	}
+	if q1.inflightMessages.Len() != 1 {
+		t.Errorf("an inflight message got deleted: %d", q1.inflightMessages.Len())
+		return
+	}
+
+	// tries to delete a message on a non-existing queue
+	req = newReq(
+		"DeleteMessage",
+		"a",
+		map[string]string{
+			"QueueUrl":      "wtfqueue",
+			"ReceiptHandle": "wtf",
+		},
+		map[string]string{},
+	)
+
+	go func() {
+		ctl.deleteMessage(req)
+	}()
+	res = <-req.resC
+
+	if res.err != ErrNonExistentQueue {
+		t.Errorf(
+			"Error mismatch. Expects %q, got %q",
+			ErrNonExistentQueue, res.err,
+		)
+	}
+}

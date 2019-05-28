@@ -73,6 +73,8 @@ forloop:
 			switch req.action {
 			case "CreateQueue":
 				l.createQueue(req)
+			case "DeleteMessage":
+				l.deleteMessage(req)
 			case "DeleteQueue":
 				l.deleteQueue(req)
 			case "GetQueueAttributes":
@@ -405,12 +407,42 @@ func (l *lSqs) deleteQueue(req request) {
 
 	log.Debugln("Deleting queue", url)
 
-	for name, q := range l.queues {
-		if q.url == url {
-			delete(l.queues, name)
-		}
+	var q *queue
+	if q = queueByURL(url, l.queues); q != nil {
+		log.Debugln("Queue deleted:", url)
+		delete(l.queues, q.name)
 	}
 
+	req.resC <- &reqResult{}
+}
+
+func (l *lSqs) deleteMessage(req request) {
+
+	url := req.params["QueueUrl"]
+	receiptHandle := req.params["ReceiptHandle"]
+
+	log.Debugln(
+		"Deleting message with receipt handle", receiptHandle,
+		"on queue", url,
+	)
+
+	var q *queue
+	if q = queueByURL(url, l.queues); q == nil {
+		req.resC <- &reqResult{err: ErrNonExistentQueue}
+		return
+	}
+
+	if deleted := q.deleteMessage(receiptHandle); deleted {
+		log.Debugln(
+			"Message deleted:", receiptHandle,
+			"on queue", url,
+		)
+	} else {
+		log.Debugln(
+			"Message not found:", receiptHandle,
+			"on queue", url,
+		)
+	}
 	req.resC <- &reqResult{}
 }
 

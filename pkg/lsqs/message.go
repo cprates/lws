@@ -45,13 +45,6 @@ func newMessage(
 	}
 	mID := u.String()
 
-	// simplified version of an receipt handler
-	u, err = uuid.NewRandom()
-	if err != nil {
-		return
-	}
-	rHandle := u.String()
-
 	creationTs := time.Now().UTC()
 	msg = &message{
 		owner:             owner,
@@ -61,7 +54,6 @@ func newMessage(
 		delaySeconds:      delaySeconds,
 		messageID:         mID,
 		md5OfMessageBody:  fmt.Sprintf("%x", bodyMD5.Sum(nil)),
-		receiptHandle:     rHandle,
 	}
 
 	return
