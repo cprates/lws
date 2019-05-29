@@ -39,6 +39,13 @@ type longPollRequest struct {
 	maxNumberOfMessages int
 }
 
+func (q *queue) purgeQueue() {
+
+	q.delayedMessages = list.New()
+	q.inflightMessages = list.New()
+	q.messages = list.New()
+}
+
 func (q *queue) deleteMessage(receiptHandle string) bool {
 
 	for e := q.inflightMessages.Front(); e != nil; e = e.Next() {

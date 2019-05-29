@@ -891,6 +891,7 @@ func TestDeleteMessage(t *testing.T) {
 
 	if res.err != nil {
 		t.Errorf(res.err.Error())
+		return
 	}
 
 	// test
@@ -978,5 +979,76 @@ func TestDeleteMessage(t *testing.T) {
 			"Error mismatch. Expects %q, got %q",
 			ErrNonExistentQueue, res.err,
 		)
+	}
+}
+
+func TestPurgeQueue(t *testing.T) {
+
+	ctl := &lSqs{
+		accountID: "0000000000",
+		region:    "dummy-region",
+		scheme:    "http",
+		host:      "localhost:1234",
+		queues:    map[string]*queue{},
+	}
+
+	req := newReq(
+		"CreateQueue",
+		"a",
+		map[string]string{"QueueName": "queue1", "MessageRetentionPeriod": "60"},
+		map[string]string{},
+	)
+	go func() {
+		ctl.createQueue(req)
+	}()
+	<-req.resC
+	q1 := queueByName("queue1", ctl.queues)
+
+	createAndPushMsg := func(instance *lSqs, l *list.List, body, rHandle string) {
+		msg, err := newMessage(instance, []byte(body), 0, 60*time.Second)
+		if err != nil {
+			t.Fatal(err)
+			return
+		}
+		msg.receiptHandle = rHandle
+		l.PushBack(msg)
+	}
+
+	createAndPushMsg(ctl, q1.messages, "body10", "")
+	createAndPushMsg(ctl, q1.inflightMessages, "body20", "receiptHandle20")
+	createAndPushMsg(ctl, q1.delayedMessages, "body30", "")
+
+	// Purge queue
+	req = newReq(
+		"PurgeQueue",
+		"a",
+		map[string]string{
+			"QueueUrl": q1.url,
+		},
+		map[string]string{},
+	)
+
+	go func() {
+		ctl.purgeQueue(req)
+	}()
+	res := <-req.resC
+
+	if res.err != nil {
+		t.Errorf(res.err.Error())
+		return
+	}
+
+	// test
+	if q1.messages.Len() != 0 {
+		t.Errorf("expects 0 queued messages, got %d", q1.messages.Len())
+		return
+	}
+	if q1.inflightMessages.Len() != 0 {
+		t.Errorf("expects 0 inflight messages, got %d", q1.messages.Len())
+		return
+	}
+	if q1.delayedMessages.Len() != 0 {
+		t.Errorf("expects 0 delayed messages, got %d", q1.messages.Len())
+		return
 	}
 }

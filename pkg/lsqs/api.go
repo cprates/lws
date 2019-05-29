@@ -307,6 +307,45 @@ func (a API) ListQueues(
 	return common.SuccessRes(buf, reqID)
 }
 
+// PurgeQueue deletes the messages in a queue specified by the QueueURL parameter.
+func (a API) PurgeQueue(
+	ctx context.Context,
+	params map[string]string,
+	attributes map[string]string,
+) common.Result {
+
+	reqID := ctx.Value(common.ReqIDKey{}).(string)
+
+	if _, present := params["QueueUrl"]; !present {
+		return common.ErrMissingParamRes("QueueUrl is a required parameter", reqID)
+	}
+
+	res := a.pushReq("PurgeQueue", reqID, params, attributes)
+	if res.err != nil {
+		switch res.err {
+		case ErrNonExistentQueue:
+			return ErrNonExistentQueueRes(reqID)
+		default:
+			return common.ErrInternalErrorRes(res.err.Error(), reqID)
+		}
+	}
+
+	xmlData := struct {
+		XMLName          xml.Name `xml:"PurgeQueueResponse"`
+		ResponseMetadata struct {
+			RequestID string `xml:"RequestId"`
+		}
+	}{}
+	xmlData.ResponseMetadata.RequestID = reqID
+
+	buf, err := xml.Marshal(xmlData)
+	if err != nil {
+		return common.ErrInternalErrorRes(err.Error(), reqID)
+	}
+
+	return common.SuccessRes(buf, reqID)
+}
+
 // ReceiveMessage return a datastructs of messages from the specified queue.
 func (a API) ReceiveMessage(
 	ctx context.Context,

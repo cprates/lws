@@ -83,6 +83,8 @@ forloop:
 				l.getQueueURL(req)
 			case "ListQueues":
 				l.listQueues(req)
+			case "PurgeQueue":
+				l.purgeQueue(req)
 			case "ReceiveMessage":
 				l.receiveMessage(req)
 			case "SendMessage":
@@ -552,6 +554,22 @@ func (l *lSqs) listQueues(req request) {
 	}
 
 	req.resC <- &reqResult{data: urls}
+}
+
+func (l *lSqs) purgeQueue(req request) {
+
+	url := req.params["QueueUrl"]
+
+	log.Debugln("Purging queue", url)
+
+	var q *queue
+	if q = queueByURL(url, l.queues); q == nil {
+		req.resC <- &reqResult{err: ErrNonExistentQueue}
+		return
+	}
+
+	q.purgeQueue()
+	req.resC <- &reqResult{}
 }
 
 func (l *lSqs) receiveMessage(req request) {
