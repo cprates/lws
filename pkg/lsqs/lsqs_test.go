@@ -35,7 +35,8 @@ func TestCreateQueueAndProperties(t *testing.T) {
 		host:      "localhost:1234",
 		queues: map[string]*queue{
 			"dummyQ": {
-				lrn: "arn:aws:sqs:us-east-1:80398EXAMPLE:queue1",
+				lrn:          "arn:aws:sqs:us-east-1:80398EXAMPLE:queue1",
+				sourceQueues: map[string]*queue{},
 			},
 		},
 	}
@@ -67,9 +68,10 @@ func TestCreateQueueAndProperties(t *testing.T) {
 				maximumMessageSize:            262144,
 				messageRetentionPeriod:        345600,
 				receiveMessageWaitTimeSeconds: 0,
+				visibilityTimeout:             30,
 				deadLetterTargetArn:           "",
 				maxReceiveCount:               0,
-				visibilityTimeout:             30,
+				sourceQueues:                  map[string]*queue{},
 				fifoQueue:                     false,
 				contentBasedDeduplication:     false,
 			},
@@ -103,9 +105,10 @@ func TestCreateQueueAndProperties(t *testing.T) {
 				maximumMessageSize:            1024,
 				messageRetentionPeriod:        1209600,
 				receiveMessageWaitTimeSeconds: 20,
+				visibilityTimeout:             43200,
 				deadLetterTargetArn:           "arn:aws:sqs:us-east-1:80398EXAMPLE:queue1",
 				maxReceiveCount:               1000,
-				visibilityTimeout:             43200,
+				sourceQueues:                  map[string]*queue{},
 				fifoQueue:                     true,
 				contentBasedDeduplication:     true,
 			},
@@ -1049,6 +1052,184 @@ func TestPurgeQueue(t *testing.T) {
 	}
 	if q1.delayedMessages.Len() != 0 {
 		t.Errorf("expects 0 delayed messages, got %d", q1.messages.Len())
+		return
+	}
+}
+
+// Tests a simple redrive of a single message, checking if the creation date is not changed, and
+// the received counter is not reset to zero.
+func TestDeadLetterRedrive(t *testing.T) {
+
+	ctl := &lSqs{
+		accountID: "0000000000",
+		region:    "dummy-region",
+		scheme:    "http",
+		host:      "localhost:1234",
+		queues:    map[string]*queue{},
+	}
+
+	req := newReq(
+		"CreateQueue",
+		"a",
+		map[string]string{"QueueName": "deadLetter"},
+		map[string]string{},
+	)
+	go func() {
+		ctl.createQueue(req)
+	}()
+	<-req.resC
+	dlq := queueByName("deadLetter", ctl.queues)
+
+	req = newReq(
+		"CreateQueue",
+		"b",
+		map[string]string{"QueueName": "queue1"},
+		map[string]string{
+			"RedrivePolicy": `{"deadLetterTargetArn":"` + dlq.lrn + `","maxReceiveCount":"2"}`,
+		},
+	)
+	go func() {
+		ctl.createQueue(req)
+	}()
+	<-req.resC
+	q1 := queueByName("queue1", ctl.queues)
+
+	// send message
+	msg, err := newMessage(ctl, []byte("body1"), 0, 60*time.Second)
+	if err != nil {
+		t.Fatal(err)
+		return
+	}
+	msg.received = 2
+	msg.deadline = time.Now().UTC().Add(time.Second * -10)
+	q1.inflightMessages.PushBack(msg)
+
+	// redrive to dead-letter
+	creationTsBefore := msg.createdTimestamp
+	ctl.handleInflight()
+
+	// test
+	if q1.messages.Len() != 0 || q1.inflightMessages.Len() != 0 {
+		t.Errorf(
+			"Expected zero messages on queue1, got %d queued and %d in flight",
+			q1.messages.Len(),
+			q1.inflightMessages.Len(),
+		)
+		return
+	}
+
+	if dlq.messages.Len() != 1 {
+		t.Errorf("Expected one queued message, got %d", dlq.messages.Len())
+		return
+	}
+
+	creationTsAfter := msg.createdTimestamp
+	if !creationTsAfter.Equal(creationTsBefore) {
+		t.Error("Creation date has changed after redrive")
+		return
+	}
+
+	if msg.received != 2 {
+		t.Errorf(
+			"'received' counter must not be reset or changed after redrive. Got %d", msg.received,
+		)
+	}
+}
+
+// When deleting a dead-letter queue, source-queues are NOT updated, which means that if a queue
+// with the same name is created, it is automatically converted in a dead-letter queue.
+// This test is making sure that this is happening.
+func TestDeleteDeadLetter(t *testing.T) {
+
+	ctl := &lSqs{
+		accountID: "0000000000",
+		region:    "dummy-region",
+		scheme:    "http",
+		host:      "localhost:1234",
+		queues:    map[string]*queue{},
+	}
+
+	req := newReq(
+		"CreateQueue",
+		"a",
+		map[string]string{"QueueName": "deadLetter"},
+		map[string]string{},
+	)
+	go func() {
+		ctl.createQueue(req)
+	}()
+	<-req.resC
+	dlq := queueByName("deadLetter", ctl.queues)
+
+	req = newReq(
+		"CreateQueue",
+		"b",
+		map[string]string{"QueueName": "queue1"},
+		map[string]string{
+			"RedrivePolicy": `{"deadLetterTargetArn":"` + dlq.lrn + `","maxReceiveCount":"2"}`,
+		},
+	)
+	go func() {
+		ctl.createQueue(req)
+	}()
+	<-req.resC
+	q1 := queueByName("queue1", ctl.queues)
+
+	// delete dead-letter
+	req = newReq(
+		"DeleteQueue",
+		"c",
+		map[string]string{"QueueUrl": dlq.url},
+		map[string]string{},
+	)
+	go func() {
+		ctl.deleteQueue(req)
+	}()
+	res := <-req.resC
+
+	if res.err != nil {
+		t.Errorf(res.err.Error())
+		return
+	}
+
+	//re-create the dead-letter queue
+	req = newReq(
+		"CreateQueue",
+		"d",
+		map[string]string{"QueueName": "deadLetter"},
+		map[string]string{},
+	)
+	go func() {
+		ctl.createQueue(req)
+	}()
+	<-req.resC
+	dlq = queueByName("deadLetter", ctl.queues)
+
+	// send message
+	msg, err := newMessage(ctl, []byte("body1"), 0, 60*time.Second)
+	if err != nil {
+		t.Fatal(err)
+		return
+	}
+	msg.received = 2
+	msg.deadline = time.Now().UTC().Add(time.Second * -10)
+	q1.inflightMessages.PushBack(msg)
+
+	// redrive to dead-letter
+	ctl.handleInflight()
+
+	// test
+	if q1.messages.Len() != 0 || q1.inflightMessages.Len() != 0 {
+		t.Errorf(
+			"Expected zero messages on queue1, got %d queued and %d in flight",
+			q1.messages.Len(),
+			q1.inflightMessages.Len(),
+		)
+		return
+	}
+
+	if dlq.messages.Len() != 1 {
+		t.Errorf("Expected one queued message, got %d", dlq.messages.Len())
 		return
 	}
 }

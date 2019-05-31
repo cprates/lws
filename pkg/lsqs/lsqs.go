@@ -25,7 +25,7 @@ type lSqs struct {
 	region    string
 	scheme    string
 	host      string
-	queues    map[string]*queue
+	queues    map[string]*queue // TODO: may be the key should be the queue's URL
 	// TODO: align
 }
 
@@ -130,12 +130,39 @@ func (l *lSqs) handleInflight() {
 			toRemove = append(toRemove, elem)
 
 			// if retention deadline has been exceeded while inflight, drop the message
-			if msg.retentionDeadline.After(now) {
-				log.Debugln("Message", msg.messageID, "moved from inflight to main queue")
-				queue.messages.PushBack(msg)
-			} else {
-				log.Debugln("Message", msg.messageID, "dropped after inflight period")
+			if msg.retentionDeadline.Before(now) {
+				log.Debugln(
+					"Message", msg.messageID,
+					"has exceed retention period after inflight period. Dropping...",
+				)
+				continue
 			}
+
+			// if a dead-letter queue is configured, check if it needs to be redrived
+			if queue.deadLetterTargetArn != "" && msg.received >= queue.maxReceiveCount {
+				// aws allow to delete a dead-letter queue without removing it from source
+				// queues so, we need to check if it exists
+				deadLetterQ := queueByArn(queue.deadLetterTargetArn, l.queues)
+				if deadLetterQ != nil {
+					// move it right away unlike aws does, which only redrive the message when the user
+					// tries to receive a message again
+					msg.receiptHandle = ""
+					deadLetterQ.messages.PushBack(msg)
+					log.Debugln(
+						"Message", msg.messageID,
+						"moved to dead-letter queue", deadLetterQ.url,
+					)
+					continue
+				}
+				// if the target dead-letter doesn't exist, requeue the message
+				log.Warnln(
+					"Dead-letter configured on queue", queue.url,
+					"but doesn't exists:", queue.deadLetterTargetArn,
+				)
+			}
+
+			log.Debugln("Message", msg.messageID, "moved from inflight to main queue")
+			queue.messages.PushBack(msg)
 		}
 
 		// remove expired ones
@@ -234,8 +261,8 @@ func validateRedrivePolicy(
 	val string,
 	queues map[string]*queue,
 ) (
-	dlta string,
-	mrc uint32,
+	deadLetterTarget *queue,
+	maxReceiveCount uint32,
 	err error,
 ) {
 
@@ -249,18 +276,19 @@ func validateRedrivePolicy(
 		return
 	}
 
-	mrc, err = params.ValUI32(
+	maxReceiveCount, err = params.ValUI32(
 		"MaxReceiveCount",
 		0,
-		0,
-		1000000,
+		1,
+		1000,
 		map[string]string{"MaxReceiveCount": tmp.MaxReceiveCount},
 	)
 	if err != nil {
 		return
 	}
 
-	if queueByArn(tmp.DeadLetterTargetArn, queues) == nil {
+	var targetQueue *queue
+	if targetQueue = queueByArn(tmp.DeadLetterTargetArn, queues); targetQueue == nil {
 		err = fmt.Errorf(
 			"value %s for parameter RedrivePolicy is invalid. Reason: Dead letter target does not exist",
 			val,
@@ -269,10 +297,9 @@ func validateRedrivePolicy(
 		return
 	}
 
-	// the arn will need to match an existing queue arn so, no need to check its structure.
-	// On the original service it's no possible to use a dead-letter queue in a different region
+	// On the original service it's not possible to use a dead-letter queue in a different region
 	// account as the source but, this project doesn't care much about that, at least for now
-	dlta = tmp.DeadLetterTargetArn
+	deadLetterTarget = targetQueue
 	return
 }
 
@@ -282,7 +309,7 @@ func (l *lSqs) createQueue(req request) {
 	url := fmt.Sprintf("%s://%s.queue.%s/%s/%s", l.scheme, l.region, l.host, l.accountID, name)
 	lrn := fmt.Sprintf("arn:aws:sqs:%s:%s:%s", l.region, l.accountID, name)
 	ts := time.Now().Unix()
-	q := &queue{
+	newQ := &queue{
 		name:                  name,
 		lrn:                   lrn,
 		url:                   url,
@@ -292,6 +319,7 @@ func (l *lSqs) createQueue(req request) {
 		inflightMessages:      list.New(),
 		delayedMessages:       list.New(),
 		longPollQueue:         list.New(),
+		sourceQueues:          map[string]*queue{},
 	}
 
 	log.Debugln("Creating new queue", url)
@@ -312,7 +340,7 @@ func (l *lSqs) createQueue(req request) {
 		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
 		return
 	}
-	q.delaySeconds = delaySeconds
+	newQ.delaySeconds = delaySeconds
 
 	maximumMessageSize, err := params.ValUI32(
 		"MaximumMessageSize",
@@ -326,7 +354,7 @@ func (l *lSqs) createQueue(req request) {
 		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
 		return
 	}
-	q.maximumMessageSize = maximumMessageSize
+	newQ.maximumMessageSize = maximumMessageSize
 
 	messageRetentionPeriod, err := params.ValUI32(
 		"MessageRetentionPeriod", 345600, 60, 1209600, req.attributes,
@@ -336,7 +364,7 @@ func (l *lSqs) createQueue(req request) {
 		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
 		return
 	}
-	q.messageRetentionPeriod = messageRetentionPeriod
+	newQ.messageRetentionPeriod = messageRetentionPeriod
 
 	receiveMessageWaitTimeSeconds, err := params.ValUI32(
 		"ReceiveMessageWaitTimeSeconds", 0, 0, 20, req.attributes,
@@ -346,23 +374,28 @@ func (l *lSqs) createQueue(req request) {
 		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
 		return
 	}
-	q.receiveMessageWaitTimeSeconds = receiveMessageWaitTimeSeconds
+	newQ.receiveMessageWaitTimeSeconds = receiveMessageWaitTimeSeconds
 
-	var dlta string
-	var mrc uint32
 	if p := params.ValString("RedrivePolicy", req.attributes); p != "" {
-		dlta, mrc, err = validateRedrivePolicy(p, l.queues)
+		var maxReceiveCount uint32
+		var deadLetterTarget *queue
+		deadLetterTarget, maxReceiveCount, err = validateRedrivePolicy(p, l.queues)
 		if err != nil {
 			log.Debugln(err)
 			req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
 			return
 		}
 
-		// TODO: add the src arn to the dead-letter to link them in both ways. Not sure if this
-		// is really need tbh
+		deadLetterTarget.sourceQueues[newQ.url] = newQ
+		newQ.deadLetterTargetArn = deadLetterTarget.lrn
+		newQ.maxReceiveCount = maxReceiveCount
+
+		for _, q := range l.queues {
+			if q.deadLetterTargetArn == newQ.lrn {
+				newQ.sourceQueues[q.url] = q
+			}
+		}
 	}
-	q.deadLetterTargetArn = dlta
-	q.maxReceiveCount = mrc
 
 	visibilityTimeout, err := params.ValUI32("VisibilityTimeout", 30, 0, 43200, req.attributes)
 	if err != nil {
@@ -370,7 +403,7 @@ func (l *lSqs) createQueue(req request) {
 		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
 		return
 	}
-	q.visibilityTimeout = visibilityTimeout
+	newQ.visibilityTimeout = visibilityTimeout
 
 	fifoQueue, err := params.ValBool("FifoQueue", false, req.attributes)
 	if err != nil {
@@ -378,7 +411,7 @@ func (l *lSqs) createQueue(req request) {
 		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
 		return
 	}
-	q.fifoQueue = fifoQueue
+	newQ.fifoQueue = fifoQueue
 
 	contentBasedDeduplication, err := params.ValBool(
 		"ContentBasedDeduplication",
@@ -390,9 +423,9 @@ func (l *lSqs) createQueue(req request) {
 		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
 		return
 	}
-	q.contentBasedDeduplication = contentBasedDeduplication
+	newQ.contentBasedDeduplication = contentBasedDeduplication
 
-	l.queues[name] = q
+	l.queues[name] = newQ
 
 	req.resC <- &reqResult{data: url}
 }
@@ -409,13 +442,27 @@ func (l *lSqs) deleteQueue(req request) {
 
 	log.Debugln("Deleting queue", url)
 
-	var q *queue
-	if q = queueByURL(url, l.queues); q != nil {
+	defer func() {
 		log.Debugln("Queue deleted:", url)
-		delete(l.queues, q.name)
+		req.resC <- &reqResult{}
+	}()
+
+	var q *queue
+	if q = queueByURL(url, l.queues); q == nil {
+		return
 	}
 
-	req.resC <- &reqResult{}
+	// update the dead-letter queue
+	if q.deadLetterTargetArn != "" {
+		deadLetterQ := queueByArn(q.deadLetterTargetArn, l.queues)
+		delete(deadLetterQ.sourceQueues, q.url)
+		log.Debugln(
+			"Source queue", url,
+			"deleted from", deadLetterQ.url,
+		)
+	}
+
+	delete(l.queues, q.name)
 }
 
 func (l *lSqs) deleteMessage(req request) {
@@ -721,13 +768,14 @@ func (l *lSqs) setQueueAttributes(req request) {
 			}
 			q.receiveMessageWaitTimeSeconds = receiveMessageWaitTimeSeconds
 		case "RedrivePolicy":
-			dlta, mrc, e := validateRedrivePolicy(val, l.queues)
+			deadLetterTarget, maxReceiveCount, e := validateRedrivePolicy(val, l.queues)
 			if e != nil {
 				err = e
 				break
 			}
-			q.deadLetterTargetArn = dlta
-			q.maxReceiveCount = mrc
+			deadLetterTarget.sourceQueues[q.url] = q
+			q.deadLetterTargetArn = deadLetterTarget.lrn
+			q.maxReceiveCount = maxReceiveCount
 		case "VisibilityTimeout":
 			visibilityTimeout, e := params.UI32(val, 0, 43200)
 			if e != nil {

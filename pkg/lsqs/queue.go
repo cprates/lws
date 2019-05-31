@@ -28,6 +28,7 @@ type queue struct {
 	// Redrive policy
 	deadLetterTargetArn string
 	maxReceiveCount     uint32
+	sourceQueues        map[string]*queue // map queue's URL to source queues of a dead letter queue
 	// FIFO
 	fifoQueue                 bool
 	contentBasedDeduplication bool
