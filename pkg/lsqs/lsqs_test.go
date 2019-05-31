@@ -1232,4 +1232,8 @@ func TestDeleteDeadLetter(t *testing.T) {
 		t.Errorf("Expected one queued message, got %d", dlq.messages.Len())
 		return
 	}
+
+	if len(dlq.sourceQueues) != 1 {
+		t.Error("Source queues should have the old source queue before deletion")
+	}
 }

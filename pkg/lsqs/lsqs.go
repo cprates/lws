@@ -81,6 +81,8 @@ forloop:
 				l.getQueueAttributes(req)
 			case "GetQueueUrl":
 				l.getQueueURL(req)
+			case "ListDeadLetterSourceQueues":
+				l.listDeadLetterSourceQueues(req)
 			case "ListQueues":
 				l.listQueues(req)
 			case "PurgeQueue":
@@ -389,12 +391,6 @@ func (l *lSqs) createQueue(req request) {
 		deadLetterTarget.sourceQueues[newQ.url] = newQ
 		newQ.deadLetterTargetArn = deadLetterTarget.lrn
 		newQ.maxReceiveCount = maxReceiveCount
-
-		for _, q := range l.queues {
-			if q.deadLetterTargetArn == newQ.lrn {
-				newQ.sourceQueues[q.url] = q
-			}
-		}
 	}
 
 	visibilityTimeout, err := params.ValUI32("VisibilityTimeout", 30, 0, 43200, req.attributes)
@@ -424,6 +420,14 @@ func (l *lSqs) createQueue(req request) {
 		return
 	}
 	newQ.contentBasedDeduplication = contentBasedDeduplication
+
+	// loo for previous source queues (dead-letter related)
+	for _, q := range l.queues {
+		if q.deadLetterTargetArn == newQ.lrn {
+			log.Debugln("Re-adding source queue", q.url)
+			newQ.sourceQueues[q.url] = q
+		}
+	}
 
 	l.queues[name] = newQ
 
@@ -574,6 +578,24 @@ func (l *lSqs) getQueueURL(req request) {
 
 	if q := queueByName(queueName, l.queues); q != nil {
 		req.resC <- &reqResult{data: q.url}
+		return
+	}
+
+	req.resC <- &reqResult{err: ErrNonExistentQueue}
+}
+
+func (l *lSqs) listDeadLetterSourceQueues(req request) {
+
+	queueURL := req.params["QueueUrl"]
+
+	log.Debugln("Getting list of Dead Letter source queues for queue", queueURL)
+
+	if q := queueByURL(queueURL, l.queues); q != nil {
+		var sources []string
+		for k := range q.sourceQueues {
+			sources = append(sources, k)
+		}
+		req.resC <- &reqResult{data: sources}
 		return
 	}
 

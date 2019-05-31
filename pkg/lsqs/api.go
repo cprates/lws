@@ -273,6 +273,50 @@ func (a API) GetQueueUrl(
 	return common.SuccessRes(buf, reqID)
 }
 
+// ListDeadLetterSourceQueues Returns a list of your queues that have the RedrivePolicy queue
+// attribute configured with a dead-letter queue.
+func (a API) ListDeadLetterSourceQueues(
+	ctx context.Context,
+	params map[string]string,
+	attributes map[string]string,
+) common.Result {
+
+	reqID := ctx.Value(common.ReqIDKey{}).(string)
+
+	if _, present := params["QueueUrl"]; !present {
+		return common.ErrMissingParamRes("QueueUrl is a required parameter", reqID)
+	}
+
+	res := a.pushReq("ListDeadLetterSourceQueues", reqID, params, attributes)
+	if res.err != nil {
+		switch res.err {
+		case ErrNonExistentQueue:
+			return ErrNonExistentQueueRes(reqID)
+		default:
+			return common.ErrInternalErrorRes(res.err.Error(), reqID)
+		}
+	}
+
+	xmlData := struct {
+		XMLName           xml.Name `xml:"ListDeadLetterSourceQueuesResponse"`
+		GetQueueURLResult struct {
+			QueueURL []string `xml:"QueueUrl"`
+		} `xml:"ListDeadLetterSourceQueuesResult"`
+		ResponseMetadata struct {
+			RequestID string `xml:"RequestId"`
+		}
+	}{}
+	xmlData.ResponseMetadata.RequestID = reqID
+	xmlData.GetQueueURLResult.QueueURL = res.data.([]string)
+
+	buf, err := xml.Marshal(xmlData)
+	if err != nil {
+		return common.ErrInternalErrorRes(err.Error(), reqID)
+	}
+
+	return common.SuccessRes(buf, reqID)
+}
+
 // ListQueues return a datastructs of existing queues on this instance.
 func (a API) ListQueues(
 	ctx context.Context,
