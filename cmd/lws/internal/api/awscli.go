@@ -17,9 +17,7 @@ import (
 )
 
 // AwsCli represents an instance of an AWS CLI compatible interface.
-type AwsCli struct {
-	services map[string]dispatchFunc
-}
+type AwsCli struct{}
 
 type dispatchFunc func(
 	ctx context.Context,
@@ -30,28 +28,13 @@ type dispatchFunc func(
 	attributes map[string]string,
 ) common.Result
 
-// NewAwsCli creates a new empty AWS CLI compatible interface to serve HTTP requests.
-func NewAwsCli(router *mux.Router) AwsCli {
+// InstallAwsCli installs an AWS CLI compatible interface to serve HTTP requests.
+func InstallAwsCli(router *mux.Router, region, account, proto, addr string) AwsCli {
 
-	awsCli := AwsCli{
-		services: map[string]dispatchFunc{},
-	}
-
-	// TODO: this should be an arg or something like that, loaded on the main
-	addr := viper.GetString("service.addr")
-	proto := viper.GetString("service.protocol")
-	region := viper.GetString("service.region")
-	account := viper.GetString("service.accountId")
-
-	awsCli.InstallSQS(region, account, proto, addr)
+	awsCli := AwsCli{}
+	awsCli.InstallSQS(router, region, account, proto, addr)
 
 	return awsCli
-}
-
-func (a AwsCli) regService(id string, f dispatchFunc) AwsCli {
-
-	a.services[id] = f
-	return a
 }
 
 // service tries to get the service name from the Authorization info. The service name
@@ -80,10 +63,9 @@ func service(params url.Values, headers http.Header) string {
 	return service
 }
 
-// Dispatcher returns a function to dispatch requests to the correct endpoints
-// based on the Action parameter.
-// TODO: check api version?
-func (a AwsCli) Dispatcher() http.HandlerFunc {
+// commonDispatcher returns a function to dispatch requests to the correct endpoints
+// based on the Action parameter. This dispatcher will serve requests for LSQS and LSNS.
+func commonDispatcher(dispatcherF dispatchFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		u, err := uuid.NewRandom()
 		if err != nil {
@@ -127,16 +109,9 @@ func (a AwsCli) Dispatcher() http.HandlerFunc {
 			return
 		}
 
-		dispatchF, ok := a.services[service]
-		if !ok {
-			log.Errorf("Unknown Service %q, %s", service, reqID)
-			onInvalidParameterValue(w, service, reqID)
-			return
-		}
-
 		ctx := context.WithValue(context.Background(), common.ReqIDKey{}, reqID)
 		p, a := flattAndParse(params)
-		res := dispatchF(ctx, reqID, r.Method, r.RequestURI, p, a)
+		res := dispatcherF(ctx, reqID, r.Method, r.RequestURI, p, a)
 		if res.Status != 200 {
 			log.Debugln("Failed serving req", reqID, res.Err)
 			onLwsErr(w, res)

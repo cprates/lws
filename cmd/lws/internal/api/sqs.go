@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 
+	"github.com/gorilla/mux"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/cprates/lws/common"
@@ -13,11 +14,11 @@ import (
 var sqsAction = map[string]reflect.Value{}
 
 // InstallSQS installs SQS service and starts a new instance of LSqs.
-func (a AwsCli) InstallSQS(region, accountID, scheme, host string) {
+func (a AwsCli) InstallSQS(router *mux.Router, region, account, proto, addr string) {
 
 	log.Println("Installing SQS service")
 
-	api := lsqs.New(region, accountID, scheme, host)
+	api := lsqs.New(region, account, proto, addr)
 	lt := reflect.TypeOf(api)
 	lv := reflect.ValueOf(api)
 
@@ -27,7 +28,8 @@ func (a AwsCli) InstallSQS(region, accountID, scheme, host string) {
 		sqsAction[mt.Name] = mv
 	}
 
-	a.regService("sqs", sqsDispatcher)
+	// SQS requests (and SNS) have no distinct path
+	router.HandleFunc("/", commonDispatcher(sqsDispatcher))
 }
 
 func sqsDispatcher(
