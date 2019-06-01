@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
+	"github.com/spf13/viper"
 
 	"github.com/cprates/lws/common"
 )
@@ -108,7 +109,7 @@ func (a AwsCli) Dispatcher() http.HandlerFunc {
 		service := service(params, r.Header)
 		if service == "" {
 			log.Errorln("Authorization info not present or invalid,", reqID)
-			onAccessDenied(w, "http://"+r.Host, reqID) //  TODO: the schema should come from config
+			onAccessDenied(w, viper.GetString("service.protocol")+"://"+r.Host, reqID)
 			return
 		}
 

@@ -1,12 +1,14 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"runtime"
 	"strconv"
 
 	log "github.com/sirupsen/logrus"
+	"github.com/spf13/viper"
 
 	"github.com/cprates/lws/cmd/lws/internal/api"
 )
@@ -26,18 +28,30 @@ func init() {
 			},
 		},
 	)
+
+	viper.SetConfigName("config")
+	viper.AddConfigPath(".")
+	err := viper.ReadInConfig()
+	if err != nil {
+		panic(fmt.Errorf("fatal error config file: %s", err))
+	}
 }
 
 func main() {
 
-	log.Println("Starting LWS...") // TODO: log port and host
+	log.Println("Starting LWS...")
+	addr := viper.GetString("service.addr")
+	log.Println("Listening on", addr)
 
+	proto := viper.GetString("service.protocol")
+	region := viper.GetString("service.region")
+	account := viper.GetString("service.accountId")
 	awsCli := api.NewAwsCli()
-	awsCli.InstallSQS("us-est-2", "0000000000", "http", "localhost:8080") // TODO: this must come from a config file
-	awsCli.InstallSNS("us-est-2", "0000000000", "http", "localhost:8080") // TODO: this must come from a config file
+	awsCli.InstallSQS(region, account, proto, addr)
+	awsCli.InstallSNS(region, account, proto, addr)
 
 	s := newServer()
 	s.regRoute("/", awsCli.Dispatcher())
 
-	log.Fatal(http.ListenAndServe(":8080", nil)) // TODO: host and port must be in a config file
+	log.Fatal(http.ListenAndServe(addr, nil))
 }
