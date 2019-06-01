@@ -33,6 +33,8 @@ func (a AwsCli) InstallSQS(region, accountID, scheme, host string) {
 func sqsDispatcher(
 	ctx context.Context,
 	reqID string,
+	method string,
+	path string,
 	params map[string]string,
 	attributes map[string]string,
 ) common.Result {

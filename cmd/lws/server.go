@@ -1,21 +1,13 @@
 package main
 
-import (
-	"net/http"
-)
+import "github.com/gorilla/mux"
 
 type server struct {
-	router *http.ServeMux
+	router *mux.Router
 }
 
 func newServer() *server {
 	return &server{
-		router: http.DefaultServeMux,
+		router: mux.NewRouter(),
 	}
-}
-
-func (s server) regRoute(path string, f http.HandlerFunc) server {
-
-	s.router.HandleFunc(path, f)
-	return s
 }

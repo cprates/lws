@@ -43,15 +43,8 @@ func main() {
 	addr := viper.GetString("service.addr")
 	log.Println("Listening on", addr)
 
-	proto := viper.GetString("service.protocol")
-	region := viper.GetString("service.region")
-	account := viper.GetString("service.accountId")
-	awsCli := api.NewAwsCli()
-	awsCli.InstallSQS(region, account, proto, addr)
-	awsCli.InstallSNS(region, account, proto, addr)
-
 	s := newServer()
-	s.regRoute("/", awsCli.Dispatcher())
+	s.router.HandleFunc("/", api.NewAwsCli(s.router).Dispatcher())
 
-	log.Fatal(http.ListenAndServe(addr, nil))
+	log.Fatal(http.ListenAndServe(addr, s.router))
 }

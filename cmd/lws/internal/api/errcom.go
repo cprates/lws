@@ -34,19 +34,6 @@ func onLwsErr(w http.ResponseWriter, r common.Result) {
 	}
 }
 
-func onMissingAction(w http.ResponseWriter, reqID string) {
-
-	err := lerr.Result{
-		Result: lerr.Details{
-			Type:      "Sender",
-			Code:      "MissingAction",
-			Message:   "Missing Action",
-			RequestID: reqID,
-		},
-	}
-	writeErr(w, http.StatusBadRequest, err)
-}
-
 func onInvalidParameterValue(w http.ResponseWriter, srv, reqID string) {
 
 	err := lerr.Result{

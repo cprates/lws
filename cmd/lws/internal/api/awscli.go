@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/gorilla/mux"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 
@@ -23,15 +24,28 @@ type AwsCli struct {
 type dispatchFunc func(
 	ctx context.Context,
 	reqID string,
+	method string,
+	path string,
 	params map[string]string,
 	attributes map[string]string,
 ) common.Result
 
 // NewAwsCli creates a new empty AWS CLI compatible interface to serve HTTP requests.
-func NewAwsCli() AwsCli {
-	return AwsCli{
+func NewAwsCli(router *mux.Router) AwsCli {
+
+	awsCli := AwsCli{
 		services: map[string]dispatchFunc{},
 	}
+
+	// TODO: this should be an arg or something like that, loaded on the main
+	addr := viper.GetString("service.addr")
+	proto := viper.GetString("service.protocol")
+	region := viper.GetString("service.region")
+	account := viper.GetString("service.accountId")
+
+	awsCli.InstallSQS(region, account, proto, addr)
+
+	return awsCli
 }
 
 func (a AwsCli) regService(id string, f dispatchFunc) AwsCli {
@@ -113,12 +127,6 @@ func (a AwsCli) Dispatcher() http.HandlerFunc {
 			return
 		}
 
-		if id := params.Get("Action"); id == "" {
-			log.Errorln("Action not specified,", reqID)
-			onMissingAction(w, reqID)
-			return
-		}
-
 		dispatchF, ok := a.services[service]
 		if !ok {
 			log.Errorf("Unknown Service %q, %s", service, reqID)
@@ -128,7 +136,7 @@ func (a AwsCli) Dispatcher() http.HandlerFunc {
 
 		ctx := context.WithValue(context.Background(), common.ReqIDKey{}, reqID)
 		p, a := flattAndParse(params)
-		res := dispatchF(ctx, reqID, p, a)
+		res := dispatchF(ctx, reqID, r.Method, r.RequestURI, p, a)
 		if res.Status != 200 {
 			log.Debugln("Failed serving req", reqID, res.Err)
 			onLwsErr(w, res)
