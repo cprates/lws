@@ -33,6 +33,7 @@ func InstallAwsCli(router *mux.Router, region, account, proto, addr string) AwsC
 
 	awsCli := AwsCli{}
 	awsCli.InstallSQS(router, region, account, proto, addr)
+	awsCli.InstallLambda(router, region, account, proto, addr)
 
 	return awsCli
 }
