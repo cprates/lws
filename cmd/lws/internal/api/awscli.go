@@ -33,7 +33,7 @@ func InstallAwsCli(router *mux.Router, region, account, proto, addr string) AwsC
 
 	awsCli := AwsCli{}
 	awsCli.InstallSQS(router, region, account, proto, addr)
-	awsCli.InstallLambda(router, region, account, proto, addr)
+	awsCli.InstallLambda(router, region, account, proto, addr, viper.GetString("lambda.codePath"))
 
 	return awsCli
 }
@@ -196,4 +196,13 @@ func isAttrArray(v string) bool {
 	}
 
 	return true
+}
+
+func stringInSlice(a string, list []string) bool {
+	for _, b := range list {
+		if b == a {
+			return true
+		}
+	}
+	return false
 }

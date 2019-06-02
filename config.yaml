@@ -3,3 +3,6 @@ service:
   addr: "localhost:8080"
   region: "us-est-2"
   accountId: "0000000000"
+
+lambda:
+  codePath: "function_code"

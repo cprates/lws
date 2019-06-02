@@ -1,52 +1,75 @@
 package llambda
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
+	"os"
+	"path"
 
+	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 )
 
 // LLambda is the interface to implement if you want to implement your own Lambda service.
 type LLambda interface {
-	Process(<-chan request, <-chan struct{})
+	Process(<-chan Request, <-chan struct{})
 }
 
-// lLambda represents an instance of lLambda core.
-type lLambda struct {
-	accountID string
-	region    string
-	scheme    string
-	host      string
+// Instance represents an instance of lLambda core.
+type Instance struct {
+	AccountID string
+	Region    string
+	Proto     string
+	Host      string
+
+	codePath  string
+	functions map[string]*function // by function name
 	// TODO: align
 }
 
-type reqResult struct {
-	data interface{}
-	err  error
+// ReqResult of a request process
+type ReqResult struct {
+	Data interface{}
+	Err  error
 	// extra data to be used by some errors like custom messages
-	errData interface{}
+	ErrData interface{}
 }
 
-type request struct {
-	action string
-	id     string
+// Request is used to interact with the LLambda processor.
+type Request struct {
+	Action string
+	ID     string
 	// request params
-	params map[string]string
-	// request attributes
-	attributes map[string]string
+	Params interface{}
 	// channel to read the request result from
-	resC chan *reqResult
+	ResC chan *ReqResult
 }
 
-func (l *lLambda) Process(reqC <-chan request, stopC <-chan struct{}) {
+// New returns a ready to use instance of LLambda.
+func New(account, region, proto, host, codePath string) *Instance {
+	return &Instance{
+		AccountID: account,
+		Region:    region,
+		Proto:     proto,
+		Host:      host,
+		codePath:  codePath,
+		functions: map[string]*function{},
+	}
+}
+
+// Process requests from the API.
+func (i *Instance) Process(reqC <-chan Request, stopC <-chan struct{}) {
 
 forloop:
 	for {
 		select {
 		case req := <-reqC:
-			switch req.action {
+			switch req.Action {
+			case "CreateFunction":
+				i.createFunction(req)
 			default:
-				req.resC <- &reqResult{err: fmt.Errorf("%q not implemented", req.action)}
+				req.ResC <- &ReqResult{Err: fmt.Errorf("%q not implemented", req.Action)}
 				break
 			}
 		case <-stopC:
@@ -55,4 +78,111 @@ forloop:
 	}
 
 	log.Println("Shutting down LLambda...")
+}
+
+func (i *Instance) createFunction(req Request) {
+
+	params := req.Params.(ReqCreateFunction)
+
+	if _, exists := i.functions[params.FunctionName]; exists {
+		// TODO: make it a custom error
+		req.ResC <- &ReqResult{Err: fmt.Errorf("function %s already exist", params.FunctionName)}
+		return
+	}
+
+	u, err := uuid.NewRandom()
+	if err != nil {
+		req.ResC <- &ReqResult{Err: err}
+		return
+	}
+	revID := u.String()
+
+	fName := params.FunctionName // TODO: params.FunctionName has to be parsed. it may contain the arn
+	lrn := "arn:aws:lambda:" + i.Region + ":" + i.AccountID + ":function:" + fName
+
+	if src, ok := params.Code["ZipFile"]; !ok {
+		req.ResC <- &ReqResult{Err: fmt.Errorf("unsupported code source %q", src)}
+		return
+	}
+
+	encodedCode := params.Code["ZipFile"]
+	buf := make([]byte, base64.StdEncoding.DecodedLen(len(encodedCode)))
+
+	_, err = base64.StdEncoding.Decode(buf, []byte(params.Code["ZipFile"]))
+	if err != nil {
+		req.ResC <- &ReqResult{Err: err}
+		return
+	}
+
+	codeFolder := path.Join(i.codePath, fName)
+	codeSize, err := storeFunctionCode(codeFolder, "code.zip", buf)
+	if err != nil {
+		req.ResC <- &ReqResult{Err: err}
+		return
+	}
+
+	f := function{
+		codeFolder:  codeFolder,
+		description: params.Description,
+		envVars:     params.Environment.Variables,
+		handler:     params.Handler,
+		memorySize:  params.MemorySize,
+		name:        fName,
+		lrn:         lrn,
+		publish:     params.Publish,
+		revID:       revID,
+		role:        params.Role,
+		runtime:     params.Runtime,
+		version:     "$LATEST",
+	}
+	// set default memory value
+	if f.memorySize == 0 {
+		f.memorySize = 128
+	}
+
+	i.functions[f.name] = &f
+	codeHash := sha256.Sum256(buf)
+	req.ResC <- &ReqResult{
+		Data: map[string]interface{}{
+			"CodeSha256":  fmt.Sprintf("%x", codeHash),
+			"CodeSize":    codeSize,
+			"Description": f.description,
+			"Environment": struct {
+				Variables map[string]string
+			}{
+				f.envVars,
+			},
+			"FunctionArn":  f.lrn,
+			"FunctionName": f.name,
+			"MemorySize":   f.memorySize,
+			"RevisionId":   f.revID,
+			"Role":         f.role,
+			"Runtime":      f.runtime,
+			"Version":      f.version,
+		},
+	}
+}
+
+func storeFunctionCode(dstDir, fileName string, code []byte) (n int, err error) {
+
+	if _, err = os.Stat(dstDir); os.IsNotExist(err) {
+		err = os.MkdirAll(dstDir, 0766)
+		if err != nil {
+			return
+		}
+	}
+
+	f, err := os.OpenFile(path.Join(dstDir, fileName), os.O_CREATE|os.O_WRONLY, 0766)
+	if err != nil {
+		return
+	}
+
+	defer func() {
+		e := f.Close()
+		if err == nil && e != nil {
+			err = e
+		}
+	}()
+
+	return f.Write(code)
 }
