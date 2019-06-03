@@ -3,6 +3,7 @@ package llambda
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -46,6 +47,11 @@ type Request struct {
 	ResC chan *ReqResult
 }
 
+var (
+	// ErrResourceConflict maps to ResourceConflictException
+	ErrResourceConflict = errors.New("ResourceConflictException")
+)
+
 // New returns a ready to use instance of LLambda.
 func New(account, region, proto, host, codePath string) *Instance {
 	return &Instance{
@@ -85,8 +91,10 @@ func (i *Instance) createFunction(req Request) {
 	params := req.Params.(ReqCreateFunction)
 
 	if _, exists := i.functions[params.FunctionName]; exists {
-		// TODO: make it a custom error
-		req.ResC <- &ReqResult{Err: fmt.Errorf("function %s already exist", params.FunctionName)}
+		req.ResC <- &ReqResult{
+			Err:     ErrResourceConflict,
+			ErrData: "function already exist: " + params.FunctionName,
+		}
 		return
 	}
 

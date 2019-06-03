@@ -69,25 +69,56 @@ func (a AwsCli) InstallLambda(
 	router.HandleFunc(root, createFunction(api)).Methods(http.MethodPost)
 }
 
+func onLambdaErr(statusCode int, code, message string, w http.ResponseWriter) error {
+
+	w.WriteHeader(statusCode)
+	enc := json.NewEncoder(w)
+
+	e := struct {
+		Code    string
+		Message string
+	}{
+		code,
+		message,
+	}
+
+	return enc.Encode(e)
+}
+
+func onLambdaInternalError(message string, w http.ResponseWriter) {
+	err := onLambdaErr(http.StatusInternalServerError, "ServiceException", message, w)
+	if err != nil {
+		log.Debugln(err)
+	}
+}
+
+func onLambdaInvalidParameterValue(message string, w http.ResponseWriter) {
+	err := onLambdaErr(http.StatusBadRequest, "InvalidParameterValue", message, w)
+	if err != nil {
+		log.Debugln(err)
+	}
+}
+
 // createFunction creates a Lambda function. To create a function, you need a deployment package
 // and an execution role.
 func createFunction(api *LambdaAPI) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+
+		w.Header().Add("Content-Type", "application/json")
+
 		u, err := uuid.NewRandom()
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			log.Errorln("Unexpected error", err)
+			onLambdaInternalError(err.Error(), w)
+			log.Debugln("Unexpected error", err)
 			return
 		}
 		reqID := u.String()
 
 		log.Debugf("Req %s %q, %s", r.Method, r.RequestURI, reqID)
 
-		w.Header().Add("Content-Type", "application/xml")
-
 		body, err := ioutil.ReadAll(r.Body)
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+			onLambdaInternalError(err.Error(), w)
 			log.Errorln("Failed to read body,", reqID, err)
 			return
 		}
@@ -95,38 +126,30 @@ func createFunction(api *LambdaAPI) http.HandlerFunc {
 		params := llambda.ReqCreateFunction{}
 		err = json.Unmarshal(body, &params)
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+			onLambdaInternalError(err.Error(), w)
 			log.Errorln("Failed to read query params,", reqID, err)
 			return
 		}
 
 		// performs some basic check on parameters
-		var reqRes common.Result
 		if len(params.Code) == 0 {
-			reqRes = common.ErrMissingParamRes("Code is a required parameter", reqID)
+			onLambdaInvalidParameterValue("Code is a required parameter", w)
+			return
 		} else if len(params.Description) > 256 {
-			reqRes = common.ErrInvalidParameterValueRes(
-				"Description has a maximum length of 256", reqID,
-			)
+			onLambdaInvalidParameterValue("Description has a maximum length of 256", w)
+			return
 		} else if len(params.FunctionName) == 0 {
 			// TODO: needs a better check
-			reqRes = common.ErrMissingParamRes("FunctionName is a required parameter", reqID)
+			onLambdaInvalidParameterValue("FunctionName is a required parameter", w)
+			return
 		} else if len(params.Description) > 128 {
-			reqRes = common.ErrInvalidParameterValueRes(
-				"Handler has a maximum length of 128", reqID,
-			)
+			onLambdaInvalidParameterValue("Handler has a maximum length of 128", w)
+			return
 		} else if len(params.Role) == 0 {
-			reqRes = common.ErrMissingParamRes("Role is a required parameter", reqID)
+			onLambdaInvalidParameterValue("Role is a required parameter", w)
+			return
 		} else if !stringInSlice(params.Runtime, runtimes) {
-			reqRes = common.ErrMissingParamRes(
-				"Runtime supported:"+strings.Join(runtimes, ","),
-				reqID,
-			)
-		}
-
-		if reqRes.Status != 0 {
-			log.Debugln("Failed creating function", reqID, reqRes.Err)
-			onLwsErr(w, reqRes)
+			onLambdaInvalidParameterValue("Runtime supported:"+strings.Join(runtimes, ","), w)
 			return
 		}
 
@@ -134,19 +157,30 @@ func createFunction(api *LambdaAPI) http.HandlerFunc {
 
 		lambdaRes := api.pushReq("CreateFunction", reqID, params)
 		if lambdaRes.Err != nil {
-			log.Debugln(reqID, lambdaRes.Err)
-			onLwsErr(w, common.ErrInternalErrorRes(lambdaRes.Err.Error(), reqID))
+			log.Debugln(reqID, lambdaRes.Err, lambdaRes.ErrData)
+
+			switch lambdaRes.Err {
+			case llambda.ErrResourceConflict:
+				e := onLambdaErr(
+					http.StatusConflict, lambdaRes.Err.Error(), lambdaRes.ErrData.(string), w,
+				)
+				if e != nil {
+					log.Debugln(e)
+				}
+			default:
+				onLambdaInternalError(lambdaRes.Err.Error(), w)
+			}
 			return
 		}
 
 		buf, err := json.Marshal(lambdaRes.Data)
 		if err != nil {
-			log.Debugln(reqID, reqRes.Err)
-			onLwsErr(w, common.ErrInternalErrorRes(err.Error(), reqID))
+			log.Debugln(reqID, err)
+			onLambdaInternalError(err.Error(), w)
 			return
 		}
 
-		reqRes = common.SuccessRes(buf, reqID)
+		reqRes := common.SuccessRes(buf, reqID)
 		w.WriteHeader(201)
 		_, err = w.Write(reqRes.Result)
 		if err != nil {
