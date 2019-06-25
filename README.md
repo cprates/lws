@@ -1,4 +1,6 @@
 [![Build Status](https://travis-ci.com/cprates/lws.svg?token=xhTpgcEXoSMvxWuq6XB2&branch=master)](https://travis-ci.com/cprates/lws)
+[![Go Report Card](https://goreportcard.com/badge/github.com/cprates/lws)](https://goreportcard.com/report/github.com/cprates/lws)
+[![License](https://img.shields.io/badge/license-Apache%202-blue.svg)](https://github.com/cprates/lws/blob/master/LICENSE)
 
 # LWS
 LWS (Local Web Services) is a set of mocks for AWS services that allows you to test you code offline
