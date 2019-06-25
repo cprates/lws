@@ -1,4 +1,4 @@
-package api
+package awscli
 
 import (
 	"encoding/json"
@@ -67,6 +67,10 @@ func (a AwsCli) InstallLambda(
 	root := "/2015-03-31/functions"
 	api := NewLLambdaInstance(region, accountID, scheme, host, codePath)
 	router.HandleFunc(root, createFunction(api)).Methods(http.MethodPost)
+	router.HandleFunc(
+		root+"/{FunctionName}/invocations",
+		invokeFunction(api),
+	).Methods(http.MethodPost)
 }
 
 func onLambdaErr(statusCode int, code, message string, w http.ResponseWriter) error {
@@ -119,7 +123,7 @@ func createFunction(api *LambdaAPI) http.HandlerFunc {
 		body, err := ioutil.ReadAll(r.Body)
 		if err != nil {
 			onLambdaInternalError(err.Error(), w)
-			log.Errorln("Failed to read body,", reqID, err)
+			log.Debugln("Failed to read body,", reqID, err)
 			return
 		}
 
@@ -127,7 +131,7 @@ func createFunction(api *LambdaAPI) http.HandlerFunc {
 		err = json.Unmarshal(body, &params)
 		if err != nil {
 			onLambdaInternalError(err.Error(), w)
-			log.Errorln("Failed to read query params,", reqID, err)
+			log.Debugln("Failed to read query params,", reqID, err)
 			return
 		}
 
@@ -184,7 +188,13 @@ func createFunction(api *LambdaAPI) http.HandlerFunc {
 		w.WriteHeader(201)
 		_, err = w.Write(reqRes.Result)
 		if err != nil {
-			log.Errorln("Unexpected error, request", reqID, err)
+			log.Debugln("Unexpected error, request", reqID, err)
 		}
+	}
+}
+
+func invokeFunction(api *LambdaAPI) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+
 	}
 }

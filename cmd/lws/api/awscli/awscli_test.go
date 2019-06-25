@@ -1,4 +1,4 @@
-package api
+package awscli
 
 import "testing"
 

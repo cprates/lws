@@ -10,7 +10,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 
-	"github.com/cprates/lws/cmd/lws/internal/api"
+	"github.com/cprates/lws/cmd/lws/api/awscli"
 )
 
 func init() {
@@ -47,7 +47,7 @@ func main() {
 	account := viper.GetString("service.accountId")
 
 	s := newServer()
-	api.InstallAwsCli(s.router, region, account, proto, addr)
+	awscli.Install(s.router, region, account, proto, addr)
 
 	log.Println("Listening on", addr)
 	log.Fatal(http.ListenAndServe(addr, s.router))

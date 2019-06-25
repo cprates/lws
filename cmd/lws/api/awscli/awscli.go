@@ -1,4 +1,4 @@
-package api
+package awscli
 
 import (
 	"context"
@@ -28,8 +28,8 @@ type dispatchFunc func(
 	attributes map[string]string,
 ) common.Result
 
-// InstallAwsCli installs an AWS CLI compatible interface to serve HTTP requests.
-func InstallAwsCli(router *mux.Router, region, account, proto, addr string) AwsCli {
+// Install an AWS CLI compatible interface to serve HTTP requests.
+func Install(router *mux.Router, region, account, proto, addr string) AwsCli {
 
 	awsCli := AwsCli{}
 	awsCli.InstallSQS(router, region, account, proto, addr)
