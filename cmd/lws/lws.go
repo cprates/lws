@@ -14,8 +14,20 @@ import (
 )
 
 func init() {
+
+	viper.SetConfigName("config")
+	viper.AddConfigPath(".")
+	err := viper.ReadInConfig()
+	if err != nil {
+		panic(fmt.Errorf("fatal error config file: %s", err))
+	}
+
 	log.StandardLogger().SetNoLock()
-	log.SetLevel(log.DebugLevel)
+	if viper.GetBool("debug") {
+		log.SetLevel(log.DebugLevel)
+	} else {
+		log.SetLevel(log.InfoLevel)
+	}
 	log.SetReportCaller(true)
 	log.SetFormatter(
 		&log.TextFormatter{
@@ -28,13 +40,6 @@ func init() {
 			},
 		},
 	)
-
-	viper.SetConfigName("config")
-	viper.AddConfigPath(".")
-	err := viper.ReadInConfig()
-	if err != nil {
-		panic(fmt.Errorf("fatal error config file: %s", err))
-	}
 }
 
 func main() {

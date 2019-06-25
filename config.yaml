@@ -1,3 +1,5 @@
+debug: false
+
 service:
   protocol: "http"
   addr: "localhost:8080"
