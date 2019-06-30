@@ -16,7 +16,7 @@ import (
 
 // LSqs is the interface to implement if you want to implement your own SQS service.
 type LSqs interface {
-	Process(<-chan request, <-chan struct{})
+	Process(<-chan Request, <-chan struct{})
 }
 
 // lSqs represents an instance of LSqs core.
@@ -27,24 +27,6 @@ type lSqs struct {
 	host      string
 	queues    map[string]*queue // TODO: may be the key should be the queue's URL
 	// TODO: align
-}
-
-type reqResult struct {
-	data interface{}
-	err  error
-	// extra data to be used by some errors like custom messages
-	errData interface{}
-}
-
-type request struct {
-	action string
-	id     string
-	// request params
-	params map[string]string
-	// request attributes
-	attributes map[string]string
-	// channel to read the request result from
-	resC chan *reqResult
 }
 
 var (
@@ -58,8 +40,19 @@ var (
 	ErrInvalidAttributeName = errors.New("invalid attribute name")
 )
 
+// New returns a ready to use LSQS instance.
+func New(accountID, region, scheme, host string) LSqs {
+	return &lSqs{
+		accountID: accountID,
+		region:    region,
+		scheme:    scheme,
+		host:      host,
+		queues:    map[string]*queue{},
+	}
+}
+
 // TODO: doc
-func (l *lSqs) Process(reqC <-chan request, stopC <-chan struct{}) {
+func (l *lSqs) Process(reqC <-chan Request, stopC <-chan struct{}) {
 
 	inflightTick := time.NewTicker(250 * time.Millisecond)
 	retentionTick := time.NewTicker(500 * time.Millisecond)
@@ -94,7 +87,7 @@ forloop:
 			case "SetQueueAttributes":
 				l.setQueueAttributes(req)
 			default:
-				req.resC <- &reqResult{err: fmt.Errorf("%q not implemented", req.action)}
+				req.resC <- &ReqResult{Err: fmt.Errorf("%q not implemented", req.action)}
 				break
 			}
 		case <-inflightTick.C:
@@ -123,7 +116,7 @@ func (l *lSqs) handleInflight() {
 	for _, queue := range l.queues {
 		var toRemove []*list.Element
 		for elem := queue.inflightMessages.Front(); elem != nil; elem = elem.Next() {
-			msg := elem.Value.(*message)
+			msg := elem.Value.(*Message)
 			if msg.deadline.After(now) {
 				// the list is sorted by deadline so, move to the next queue
 				break
@@ -134,24 +127,24 @@ func (l *lSqs) handleInflight() {
 			// if retention deadline has been exceeded while inflight, drop the message
 			if msg.retentionDeadline.Before(now) {
 				log.Debugln(
-					"Message", msg.messageID,
+					"Message", msg.MessageID,
 					"has exceed retention period after inflight period. Dropping...",
 				)
 				continue
 			}
 
 			// if a dead-letter queue is configured, check if it needs to be redrived
-			if queue.deadLetterTargetArn != "" && msg.received >= queue.maxReceiveCount {
+			if queue.deadLetterTargetArn != "" && msg.Received >= queue.maxReceiveCount {
 				// aws allow to delete a dead-letter queue without removing it from source
 				// queues so, we need to check if it exists
 				deadLetterQ := queueByArn(queue.deadLetterTargetArn, l.queues)
 				if deadLetterQ != nil {
 					// move it right away unlike aws does, which only redrive the message when the user
 					// tries to receive a message again
-					msg.receiptHandle = ""
+					msg.ReceiptHandle = ""
 					deadLetterQ.messages.PushBack(msg)
 					log.Debugln(
-						"Message", msg.messageID,
+						"Message", msg.MessageID,
 						"moved to dead-letter queue", deadLetterQ.url,
 					)
 					continue
@@ -163,7 +156,7 @@ func (l *lSqs) handleInflight() {
 				)
 			}
 
-			log.Debugln("Message", msg.messageID, "moved from inflight to main queue")
+			log.Debugln("Message", msg.MessageID, "moved from inflight to main queue")
 			queue.messages.PushBack(msg)
 		}
 
@@ -180,10 +173,10 @@ func (l *lSqs) handleRetention() {
 	for _, queue := range l.queues {
 		var toRemove []*list.Element
 		for node := queue.messages.Front(); node != nil; node = node.Next() {
-			msg := node.Value.(*message)
+			msg := node.Value.(*Message)
 			if msg.retentionDeadline.Before(now) {
 				toRemove = append(toRemove, node)
-				log.Debugln("Message", msg.messageID, "expired retention period")
+				log.Debugln("Message", msg.MessageID, "expired retention period")
 			}
 		}
 
@@ -199,7 +192,7 @@ func (l *lSqs) handleDelayed() {
 	for _, queue := range l.queues {
 		var toMove []*list.Element
 		for elem := queue.delayedMessages.Front(); elem != nil; elem = elem.Next() {
-			msg := elem.Value.(*message)
+			msg := elem.Value.(*Message)
 			if msg.deadline.After(now) {
 				// the list is sorted by deadline so, move to the next queue
 				break
@@ -207,7 +200,7 @@ func (l *lSqs) handleDelayed() {
 
 			toMove = append(toMove, elem)
 
-			log.Debugln("Message", msg.messageID, "moved from delayed to main queue")
+			log.Debugln("Message", msg.MessageID, "moved from delayed to main queue")
 			queue.messages.PushBack(msg)
 		}
 
@@ -230,7 +223,7 @@ func (l *lSqs) handleLongPoll() {
 					"LongPoll waiter with request", req.originalReq.id,
 					"has expired on queue", queue.url,
 				)
-				req.originalReq.resC <- &reqResult{data: []*message{}}
+				req.originalReq.resC <- &ReqResult{Data: []*Message{}}
 				servedOrExpired = append(servedOrExpired, elem)
 				continue
 			}
@@ -248,7 +241,7 @@ func (l *lSqs) handleLongPoll() {
 			log.Debugln("Serving LongPoll request", req.originalReq.id, "on queue", queue.url)
 
 			queue.setInflight(msgs)
-			req.originalReq.resC <- &reqResult{data: msgs}
+			req.originalReq.resC <- &ReqResult{Data: msgs}
 			servedOrExpired = append(servedOrExpired, elem)
 		}
 
@@ -305,7 +298,7 @@ func validateRedrivePolicy(
 	return
 }
 
-func (l *lSqs) createQueue(req request) {
+func (l *lSqs) createQueue(req Request) {
 
 	name := req.params["QueueName"]
 	url := fmt.Sprintf("%s://%s.queue.%s/%s/%s", l.scheme, l.region, l.host, l.accountID, name)
@@ -330,7 +323,7 @@ func (l *lSqs) createQueue(req request) {
 		if attrNames := configDiff(q, req.params); len(attrNames) > 0 {
 			log.Debugf("Queue %q already exists", name)
 			attrNames := strings.Join(attrNames, ",")
-			req.resC <- &reqResult{err: ErrAlreadyExists, errData: attrNames}
+			req.resC <- &ReqResult{Err: ErrAlreadyExists, ErrData: attrNames}
 			return
 		}
 	}
@@ -339,7 +332,7 @@ func (l *lSqs) createQueue(req request) {
 	delaySeconds, err := params.ValUI32("DelaySeconds", 0, 0, 900, req.attributes)
 	if err != nil {
 		log.Debugln(err)
-		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
+		req.resC <- &ReqResult{Err: ErrInvalidParameterValue, ErrData: err.Error()}
 		return
 	}
 	newQ.delaySeconds = delaySeconds
@@ -353,7 +346,7 @@ func (l *lSqs) createQueue(req request) {
 	)
 	if err != nil {
 		log.Debugln(err)
-		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
+		req.resC <- &ReqResult{Err: ErrInvalidParameterValue, ErrData: err.Error()}
 		return
 	}
 	newQ.maximumMessageSize = maximumMessageSize
@@ -363,7 +356,7 @@ func (l *lSqs) createQueue(req request) {
 	)
 	if err != nil {
 		log.Debugln(err)
-		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
+		req.resC <- &ReqResult{Err: ErrInvalidParameterValue, ErrData: err.Error()}
 		return
 	}
 	newQ.messageRetentionPeriod = messageRetentionPeriod
@@ -373,7 +366,7 @@ func (l *lSqs) createQueue(req request) {
 	)
 	if err != nil {
 		log.Debugln(err)
-		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
+		req.resC <- &ReqResult{Err: ErrInvalidParameterValue, ErrData: err.Error()}
 		return
 	}
 	newQ.receiveMessageWaitTimeSeconds = receiveMessageWaitTimeSeconds
@@ -384,7 +377,7 @@ func (l *lSqs) createQueue(req request) {
 		deadLetterTarget, maxReceiveCount, err = validateRedrivePolicy(p, l.queues)
 		if err != nil {
 			log.Debugln(err)
-			req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
+			req.resC <- &ReqResult{Err: ErrInvalidParameterValue, ErrData: err.Error()}
 			return
 		}
 
@@ -396,7 +389,7 @@ func (l *lSqs) createQueue(req request) {
 	visibilityTimeout, err := params.ValUI32("VisibilityTimeout", 30, 0, 43200, req.attributes)
 	if err != nil {
 		log.Debugln(err)
-		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
+		req.resC <- &ReqResult{Err: ErrInvalidParameterValue, ErrData: err.Error()}
 		return
 	}
 	newQ.visibilityTimeout = visibilityTimeout
@@ -404,7 +397,7 @@ func (l *lSqs) createQueue(req request) {
 	fifoQueue, err := params.ValBool("FifoQueue", false, req.attributes)
 	if err != nil {
 		log.Debugln(err)
-		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
+		req.resC <- &ReqResult{Err: ErrInvalidParameterValue, ErrData: err.Error()}
 		return
 	}
 	newQ.fifoQueue = fifoQueue
@@ -416,7 +409,7 @@ func (l *lSqs) createQueue(req request) {
 	)
 	if err != nil {
 		log.Debugln(err)
-		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
+		req.resC <- &ReqResult{Err: ErrInvalidParameterValue, ErrData: err.Error()}
 		return
 	}
 	newQ.contentBasedDeduplication = contentBasedDeduplication
@@ -431,7 +424,7 @@ func (l *lSqs) createQueue(req request) {
 
 	l.queues[name] = newQ
 
-	req.resC <- &reqResult{data: url}
+	req.resC <- &ReqResult{Data: url}
 }
 
 // at the time of writing this method, the AWS doc states that if deleting an non-existing
@@ -440,7 +433,7 @@ func (l *lSqs) createQueue(req request) {
 // https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_DeleteQueue.html
 //
 // Currently the queue is immediately deleted (no 60 sec limit as stated by AWS docs)
-func (l *lSqs) deleteQueue(req request) {
+func (l *lSqs) deleteQueue(req Request) {
 
 	url := req.params["QueueUrl"]
 
@@ -448,7 +441,7 @@ func (l *lSqs) deleteQueue(req request) {
 
 	defer func() {
 		log.Debugln("Queue deleted:", url)
-		req.resC <- &reqResult{}
+		req.resC <- &ReqResult{}
 	}()
 
 	var q *queue
@@ -469,7 +462,7 @@ func (l *lSqs) deleteQueue(req request) {
 	delete(l.queues, q.name)
 }
 
-func (l *lSqs) deleteMessage(req request) {
+func (l *lSqs) deleteMessage(req Request) {
 
 	url := req.params["QueueUrl"]
 	receiptHandle := req.params["ReceiptHandle"]
@@ -481,7 +474,7 @@ func (l *lSqs) deleteMessage(req request) {
 
 	var q *queue
 	if q = queueByURL(url, l.queues); q == nil {
-		req.resC <- &reqResult{err: ErrNonExistentQueue}
+		req.resC <- &ReqResult{Err: ErrNonExistentQueue}
 		return
 	}
 
@@ -496,10 +489,10 @@ func (l *lSqs) deleteMessage(req request) {
 			"on queue", url,
 		)
 	}
-	req.resC <- &reqResult{}
+	req.resC <- &ReqResult{}
 }
 
-func (l *lSqs) getQueueAttributes(req request) {
+func (l *lSqs) getQueueAttributes(req Request) {
 
 	queueURL := req.params["QueueUrl"]
 
@@ -507,7 +500,7 @@ func (l *lSqs) getQueueAttributes(req request) {
 
 	var q *queue
 	if q = queueByURL(queueURL, l.queues); q == nil {
-		req.resC <- &reqResult{err: ErrNonExistentQueue}
+		req.resC <- &ReqResult{Err: ErrNonExistentQueue}
 		return
 	}
 
@@ -567,24 +560,24 @@ func (l *lSqs) getQueueAttributes(req request) {
 		}
 	}
 
-	req.resC <- &reqResult{data: qAttrs}
+	req.resC <- &ReqResult{Data: qAttrs}
 }
 
-func (l *lSqs) getQueueURL(req request) {
+func (l *lSqs) getQueueURL(req Request) {
 
 	queueName := req.params["QueueName"]
 
 	log.Debugln("Getting URL for queue", queueName)
 
 	if q := queueByName(queueName, l.queues); q != nil {
-		req.resC <- &reqResult{data: q.url}
+		req.resC <- &ReqResult{Data: q.url}
 		return
 	}
 
-	req.resC <- &reqResult{err: ErrNonExistentQueue}
+	req.resC <- &ReqResult{Err: ErrNonExistentQueue}
 }
 
-func (l *lSqs) listDeadLetterSourceQueues(req request) {
+func (l *lSqs) listDeadLetterSourceQueues(req Request) {
 
 	queueURL := req.params["QueueUrl"]
 
@@ -595,14 +588,14 @@ func (l *lSqs) listDeadLetterSourceQueues(req request) {
 		for k := range q.sourceQueues {
 			sources = append(sources, k)
 		}
-		req.resC <- &reqResult{data: sources}
+		req.resC <- &ReqResult{Data: sources}
 		return
 	}
 
-	req.resC <- &reqResult{err: ErrNonExistentQueue}
+	req.resC <- &ReqResult{Err: ErrNonExistentQueue}
 }
 
-func (l *lSqs) listQueues(req request) {
+func (l *lSqs) listQueues(req Request) {
 
 	prefix := req.params["QueueNamePrefix"]
 
@@ -622,10 +615,10 @@ func (l *lSqs) listQueues(req request) {
 		}
 	}
 
-	req.resC <- &reqResult{data: urls}
+	req.resC <- &ReqResult{Data: urls}
 }
 
-func (l *lSqs) purgeQueue(req request) {
+func (l *lSqs) purgeQueue(req Request) {
 
 	url := req.params["QueueUrl"]
 
@@ -633,15 +626,15 @@ func (l *lSqs) purgeQueue(req request) {
 
 	var q *queue
 	if q = queueByURL(url, l.queues); q == nil {
-		req.resC <- &reqResult{err: ErrNonExistentQueue}
+		req.resC <- &ReqResult{Err: ErrNonExistentQueue}
 		return
 	}
 
 	q.purgeQueue()
-	req.resC <- &reqResult{}
+	req.resC <- &ReqResult{}
 }
 
-func (l *lSqs) receiveMessage(req request) {
+func (l *lSqs) receiveMessage(req Request) {
 
 	queueURL := req.params["QueueUrl"]
 
@@ -649,7 +642,7 @@ func (l *lSqs) receiveMessage(req request) {
 
 	var q *queue
 	if q = queueByURL(queueURL, l.queues); q == nil {
-		req.resC <- &reqResult{err: ErrNonExistentQueue}
+		req.resC <- &ReqResult{Err: ErrNonExistentQueue}
 		return
 	}
 
@@ -658,14 +651,14 @@ func (l *lSqs) receiveMessage(req request) {
 	)
 	if err != nil {
 		log.Debugln(err)
-		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
+		req.resC <- &ReqResult{Err: ErrInvalidParameterValue, ErrData: err.Error()}
 		return
 	}
 
 	maxNumberOfMessages, err := params.ValUI32("MaxNumberOfMessages", 1, 1, 10, req.params)
 	if err != nil {
 		log.Debugln(err)
-		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
+		req.resC <- &ReqResult{Err: ErrInvalidParameterValue, ErrData: err.Error()}
 		return
 	}
 
@@ -674,14 +667,14 @@ func (l *lSqs) receiveMessage(req request) {
 	if len(messages) > 0 || waitTimeSeconds == 0 {
 		// move messages to inflight queue
 		q.setInflight(messages)
-		req.resC <- &reqResult{data: messages}
+		req.resC <- &ReqResult{Data: messages}
 		return
 	}
 
 	q.setOnWait(&req, int(maxNumberOfMessages), time.Duration(waitTimeSeconds)*time.Second)
 }
 
-func (l *lSqs) sendMessage(req request) {
+func (l *lSqs) sendMessage(req Request) {
 
 	queueURL := req.params["QueueUrl"]
 
@@ -689,7 +682,7 @@ func (l *lSqs) sendMessage(req request) {
 
 	var q *queue
 	if q = queueByURL(queueURL, l.queues); q == nil {
-		req.resC <- &reqResult{err: ErrNonExistentQueue}
+		req.resC <- &ReqResult{Err: ErrNonExistentQueue}
 		return
 	}
 
@@ -700,7 +693,7 @@ func (l *lSqs) sendMessage(req request) {
 			q.maximumMessageSize,
 		)
 		log.Debugln(err)
-		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err}
+		req.resC <- &ReqResult{Err: ErrInvalidParameterValue, ErrData: err}
 		return
 	}
 	// TODO: check allowed chars
@@ -708,7 +701,7 @@ func (l *lSqs) sendMessage(req request) {
 	delaySeconds, err := params.ValUI32("DelaySeconds", q.delaySeconds, 0, 900, req.params)
 	if err != nil {
 		log.Debugln(err)
-		req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
+		req.resC <- &ReqResult{Err: ErrInvalidParameterValue, ErrData: err.Error()}
 		return
 	}
 
@@ -720,7 +713,7 @@ func (l *lSqs) sendMessage(req request) {
 	)
 	if err != nil {
 		log.Debugln(err)
-		req.resC <- &reqResult{err: err}
+		req.resC <- &ReqResult{Err: err}
 		return
 	}
 
@@ -731,21 +724,21 @@ func (l *lSqs) sendMessage(req request) {
 	}
 
 	log.Debugln(
-		"Sent message", msg.messageID,
+		"Sent message", msg.MessageID,
 		"to queue", q.url,
 	)
 
-	req.resC <- &reqResult{
-		data: map[string]string{
+	req.resC <- &ReqResult{
+		Data: map[string]string{
 			//"MD5OfMessageAttributes": "", // TODO: attributes not supported yet
-			"MD5OfMessageBody": msg.md5OfMessageBody,
-			"MessageId":        msg.messageID,
+			"MD5OfMessageBody": msg.Md5OfMessageBody,
+			"MessageId":        msg.MessageID,
 			//"SequenceNumber":         "", // TODO: FIFO not supported yet
 		},
 	}
 }
 
-func (l *lSqs) setQueueAttributes(req request) {
+func (l *lSqs) setQueueAttributes(req Request) {
 
 	queueURL := req.params["QueueUrl"]
 
@@ -753,7 +746,7 @@ func (l *lSqs) setQueueAttributes(req request) {
 
 	var q *queue
 	if q = queueByURL(queueURL, l.queues); q == nil {
-		req.resC <- &reqResult{err: ErrNonExistentQueue}
+		req.resC <- &ReqResult{Err: ErrNonExistentQueue}
 		return
 	}
 
@@ -811,21 +804,21 @@ func (l *lSqs) setQueueAttributes(req request) {
 		// TODO
 		default:
 			log.Debugln("Unknown attribute", attr)
-			req.resC <- &reqResult{
-				err:     ErrInvalidAttributeName,
-				errData: "Unknown Attribute " + attr,
+			req.resC <- &ReqResult{
+				Err:     ErrInvalidAttributeName,
+				ErrData: "Unknown Attribute " + attr,
 			}
 			return
 		}
 
 		if err != nil {
 			log.Debugln(err)
-			req.resC <- &reqResult{err: ErrInvalidParameterValue, errData: err.Error()}
+			req.resC <- &ReqResult{Err: ErrInvalidParameterValue, ErrData: err.Error()}
 			return
 		}
 	}
 
-	req.resC <- &reqResult{}
+	req.resC <- &ReqResult{}
 }
 
 func queueByArn(arn string, queues map[string]*queue) *queue {

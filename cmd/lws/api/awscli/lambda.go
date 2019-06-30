@@ -25,37 +25,6 @@ var runtimes = []string{
 	"go1.x",
 }
 
-func (l LambdaAPI) pushReq(action, reqID string, params interface{}) *llambda.ReqResult {
-
-	rq := newReq(action, reqID, params)
-	l.pushC <- rq
-	return <-rq.ResC
-}
-
-func newReq(action, reqID string, params interface{}) llambda.Request {
-	return llambda.Request{
-		Action: action,
-		ID:     reqID,
-		Params: params,
-		ResC:   make(chan *llambda.ReqResult),
-	}
-}
-
-// NewLLambdaInstance creates and launches a LLambda instance.
-func NewLLambdaInstance(region, accountID, proto, host, codePath string) *LambdaAPI {
-
-	instance := llambda.New(accountID, region, proto, host, codePath)
-	pushC := make(chan llambda.Request)
-	stopC := make(chan struct{})
-	go instance.Process(pushC, stopC)
-
-	return &LambdaAPI{
-		instance: instance,
-		pushC:    pushC,
-		stopC:    stopC,
-	}
-}
-
 // InstallLambda installs Lambda service and starts a new instance of LLambda.
 func (a AwsCli) InstallLambda(
 	router *mux.Router,
@@ -64,8 +33,17 @@ func (a AwsCli) InstallLambda(
 
 	log.Println("Installing Lambda service")
 
+	instance := llambda.New(accountID, region, scheme, host, codePath)
+	pushC := make(chan llambda.Request)
+	stopC := make(chan struct{})
+	go instance.Process(pushC, stopC)
+
+	api := &LambdaAPI{
+		instance: instance,
+		pushC:    pushC,
+		stopC:    stopC,
+	}
 	root := "/2015-03-31/functions"
-	api := NewLLambdaInstance(region, accountID, scheme, host, codePath)
 	router.HandleFunc(root, createFunction(api)).Methods(http.MethodPost)
 	router.HandleFunc(
 		root+"/{FunctionName}/invocations",
@@ -159,7 +137,7 @@ func createFunction(api *LambdaAPI) http.HandlerFunc {
 
 		log.Debugf("Creating function %q, %s", params.FunctionName, reqID)
 
-		lambdaRes := api.pushReq("CreateFunction", reqID, params)
+		lambdaRes := llambda.PushReq(api.pushC, "CreateFunction", reqID, params)
 		if lambdaRes.Err != nil {
 			log.Debugln(reqID, lambdaRes.Err, lambdaRes.ErrData)
 

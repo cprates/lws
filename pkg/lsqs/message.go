@@ -10,18 +10,19 @@ import (
 	"github.com/google/uuid"
 )
 
-type message struct {
+// Message represents a Queue's message.
+type Message struct {
 	owner             *lSqs
 	deadline          time.Time
 	retentionDeadline time.Time
 
-	body             []byte
-	createdTimestamp time.Time
-	delaySeconds     time.Duration
-	messageID        string
-	md5OfMessageBody string
-	receiptHandle    string
-	received         uint32
+	Body             []byte
+	CreatedTimestamp time.Time
+	DelaySeconds     time.Duration
+	MessageID        string
+	Md5OfMessageBody string
+	ReceiptHandle    string
+	Received         uint32
 }
 
 // NewMessage generates a new message with the given body and delay seconds ready to send
@@ -31,7 +32,7 @@ func newMessage(
 	body []byte,
 	delaySeconds time.Duration,
 	retentionSeconds time.Duration,
-) (msg *message, err error) {
+) (msg *Message, err error) {
 
 	bodyMD5 := md5.New()
 	_, err = io.Copy(bodyMD5, bytes.NewReader(body))
@@ -46,19 +47,19 @@ func newMessage(
 	mID := u.String()
 
 	creationTs := time.Now().UTC()
-	msg = &message{
+	msg = &Message{
 		owner:             owner,
-		body:              body,
+		Body:              body,
 		retentionDeadline: creationTs.Add(retentionSeconds),
-		createdTimestamp:  creationTs,
-		delaySeconds:      delaySeconds,
-		messageID:         mID,
-		md5OfMessageBody:  fmt.Sprintf("%x", bodyMD5.Sum(nil)),
+		CreatedTimestamp:  creationTs,
+		DelaySeconds:      delaySeconds,
+		MessageID:         mID,
+		Md5OfMessageBody:  fmt.Sprintf("%x", bodyMD5.Sum(nil)),
 	}
 
 	return
 }
 
 func deadlineCmp(i, j interface{}) int {
-	return i.(*message).deadline.Second() - j.(*message).deadline.Second()
+	return i.(*Message).deadline.Second() - j.(*Message).deadline.Second()
 }

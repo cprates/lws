@@ -202,18 +202,18 @@ func TestCreateQueueAndProperties(t *testing.T) {
 
 	for _, test := range testsSet {
 
-		req := newReq("CreateQueue", "a", test.params, test.attrs)
+		req := NewReq("CreateQueue", "a", test.params, test.attrs)
 
 		go func() {
 			ctl.createQueue(req)
 		}()
 		res := <-req.resC
 
-		if test.expectedErr != nil || res.err != nil {
-			if test.expectedErr != res.err {
+		if test.expectedErr != nil || res.Err != nil {
+			if test.expectedErr != res.Err {
 				t.Errorf(
-					"Error mismatch. %s. Expects %q, got %q with errData: %+v",
-					test.description, test.expectedErr, res.err, res.errData,
+					"Error mismatch. %s. Expects %q, got %q with ErrData: %+v",
+					test.description, test.expectedErr, res.Err, res.ErrData,
 				)
 			}
 			continue
@@ -261,7 +261,7 @@ func TestGetQueueAttributes(t *testing.T) {
 		queues:    map[string]*queue{},
 	}
 
-	req := newReq(
+	req := NewReq(
 		"CreateQueue",
 		"b",
 		map[string]string{"QueueName": "deadletter"},
@@ -273,7 +273,7 @@ func TestGetQueueAttributes(t *testing.T) {
 	<-req.resC
 	dlq := queueByName("deadletter", ctl.queues)
 
-	req = newReq(
+	req = NewReq(
 		"CreateQueue",
 		"a",
 		map[string]string{"QueueName": "queue1"},
@@ -356,23 +356,23 @@ func TestGetQueueAttributes(t *testing.T) {
 	}
 
 	for _, test := range testsSet {
-		req = newReq("GetQueueAttributes", "c", test.params, test.attrs)
+		req = NewReq("GetQueueAttributes", "c", test.params, test.attrs)
 		go func() {
 			ctl.getQueueAttributes(req)
 		}()
 		res := <-req.resC
 
-		if test.expectedErr != nil || res.err != nil {
-			if test.expectedErr != res.err {
+		if test.expectedErr != nil || res.Err != nil {
+			if test.expectedErr != res.Err {
 				t.Errorf(
-					"Error mismatch. %s. Expects %q, got %q with errData: %+v",
-					test.description, test.expectedErr, res.err, res.errData,
+					"Error mismatch. %s. Expects %q, got %q with ErrData: %+v",
+					test.description, test.expectedErr, res.Err, res.ErrData,
 				)
 			}
 			continue
 		}
 
-		attrs := res.data.(map[string]string)
+		attrs := res.Data.(map[string]string)
 		if len(attrs) != len(test.expectedAttrs) {
 			t.Errorf(
 				"%s. Expects %d attributes, Got %d. %+v ** %+v",
@@ -404,7 +404,7 @@ func TestSetQueueAttributes(t *testing.T) {
 		queues:    map[string]*queue{},
 	}
 
-	req := newReq(
+	req := NewReq(
 		"CreateQueue",
 		"b",
 		map[string]string{"QueueName": "deadletter"},
@@ -416,7 +416,7 @@ func TestSetQueueAttributes(t *testing.T) {
 	<-req.resC
 	dlq := queueByName("deadletter", ctl.queues)
 
-	req = newReq(
+	req = NewReq(
 		"CreateQueue",
 		"a",
 		map[string]string{"QueueName": "queue1"},
@@ -597,17 +597,17 @@ func TestSetQueueAttributes(t *testing.T) {
 	}
 
 	for _, test := range testsSet {
-		req = newReq("SetQueueAttributes", "c", test.params, test.attrs)
+		req = NewReq("SetQueueAttributes", "c", test.params, test.attrs)
 		go func() {
 			ctl.setQueueAttributes(req)
 		}()
 		res := <-req.resC
 
-		if test.expectedErr != nil || res.err != nil {
-			if test.expectedErr != res.err {
+		if test.expectedErr != nil || res.Err != nil {
+			if test.expectedErr != res.Err {
 				t.Errorf(
-					"Error mismatch. %s. Expects %q, got %q with errData: %+v",
-					test.description, test.expectedErr, res.err, res.errData,
+					"Error mismatch. %s. Expects %q, got %q with ErrData: %+v",
+					test.description, test.expectedErr, res.Err, res.ErrData,
 				)
 			}
 			continue
@@ -691,7 +691,7 @@ func TestInflightHandler(t *testing.T) {
 		queues:    map[string]*queue{},
 	}
 
-	req := newReq(
+	req := NewReq(
 		"CreateQueue",
 		"a",
 		map[string]string{"QueueName": "queue1"},
@@ -703,7 +703,7 @@ func TestInflightHandler(t *testing.T) {
 	<-req.resC
 	q1 := queueByName("queue1", ctl.queues)
 
-	req = newReq(
+	req = NewReq(
 		"CreateQueue",
 		"b",
 		map[string]string{"QueueName": "queue2", "MessageRetentionPeriod": "60"},
@@ -776,7 +776,7 @@ func TestRetentionHandler(t *testing.T) {
 		queues:    map[string]*queue{},
 	}
 
-	req := newReq(
+	req := NewReq(
 		"CreateQueue",
 		"a",
 		map[string]string{"QueueName": "queue1", "MessageRetentionPeriod": "60"},
@@ -788,7 +788,7 @@ func TestRetentionHandler(t *testing.T) {
 	<-req.resC
 	q1 := queueByName("queue1", ctl.queues)
 
-	req = newReq(
+	req = NewReq(
 		"CreateQueue",
 		"b",
 		map[string]string{"QueueName": "queue2", "MessageRetentionPeriod": "60"},
@@ -848,7 +848,7 @@ func TestDeleteMessage(t *testing.T) {
 		queues:    map[string]*queue{},
 	}
 
-	req := newReq(
+	req := NewReq(
 		"CreateQueue",
 		"a",
 		map[string]string{"QueueName": "queue1", "MessageRetentionPeriod": "60"},
@@ -866,7 +866,7 @@ func TestDeleteMessage(t *testing.T) {
 			t.Fatal(err)
 			return
 		}
-		msg.receiptHandle = rHandle
+		msg.ReceiptHandle = rHandle
 		l.PushBack(msg)
 	}
 
@@ -877,7 +877,7 @@ func TestDeleteMessage(t *testing.T) {
 	createAndPushMsg(ctl, q1.inflightMessages, "body21", "receiptHandle21")
 
 	// Delete queued message
-	req = newReq(
+	req = NewReq(
 		"DeleteMessage",
 		"a",
 		map[string]string{
@@ -892,8 +892,8 @@ func TestDeleteMessage(t *testing.T) {
 	}()
 	res := <-req.resC
 
-	if res.err != nil {
-		t.Errorf(res.err.Error())
+	if res.Err != nil {
+		t.Errorf(res.Err.Error())
 		return
 	}
 
@@ -904,7 +904,7 @@ func TestDeleteMessage(t *testing.T) {
 	}
 
 	// Delete inflight message
-	req = newReq(
+	req = NewReq(
 		"DeleteMessage",
 		"a",
 		map[string]string{
@@ -919,8 +919,8 @@ func TestDeleteMessage(t *testing.T) {
 	}()
 	res = <-req.resC
 
-	if res.err != nil {
-		t.Errorf(res.err.Error())
+	if res.Err != nil {
+		t.Errorf(res.Err.Error())
 		return
 	}
 
@@ -931,7 +931,7 @@ func TestDeleteMessage(t *testing.T) {
 	}
 
 	// tries to delete non-existing receipt handle
-	req = newReq(
+	req = NewReq(
 		"DeleteMessage",
 		"a",
 		map[string]string{
@@ -946,8 +946,8 @@ func TestDeleteMessage(t *testing.T) {
 	}()
 	res = <-req.resC
 
-	if res.err != nil {
-		t.Errorf(res.err.Error())
+	if res.Err != nil {
+		t.Errorf(res.Err.Error())
 		return
 	}
 
@@ -962,7 +962,7 @@ func TestDeleteMessage(t *testing.T) {
 	}
 
 	// tries to delete a message on a non-existing queue
-	req = newReq(
+	req = NewReq(
 		"DeleteMessage",
 		"a",
 		map[string]string{
@@ -977,10 +977,10 @@ func TestDeleteMessage(t *testing.T) {
 	}()
 	res = <-req.resC
 
-	if res.err != ErrNonExistentQueue {
+	if res.Err != ErrNonExistentQueue {
 		t.Errorf(
 			"Error mismatch. Expects %q, got %q",
-			ErrNonExistentQueue, res.err,
+			ErrNonExistentQueue, res.Err,
 		)
 	}
 }
@@ -995,7 +995,7 @@ func TestPurgeQueue(t *testing.T) {
 		queues:    map[string]*queue{},
 	}
 
-	req := newReq(
+	req := NewReq(
 		"CreateQueue",
 		"a",
 		map[string]string{"QueueName": "queue1", "MessageRetentionPeriod": "60"},
@@ -1013,7 +1013,7 @@ func TestPurgeQueue(t *testing.T) {
 			t.Fatal(err)
 			return
 		}
-		msg.receiptHandle = rHandle
+		msg.ReceiptHandle = rHandle
 		l.PushBack(msg)
 	}
 
@@ -1022,7 +1022,7 @@ func TestPurgeQueue(t *testing.T) {
 	createAndPushMsg(ctl, q1.delayedMessages, "body30", "")
 
 	// Purge queue
-	req = newReq(
+	req = NewReq(
 		"PurgeQueue",
 		"a",
 		map[string]string{
@@ -1036,8 +1036,8 @@ func TestPurgeQueue(t *testing.T) {
 	}()
 	res := <-req.resC
 
-	if res.err != nil {
-		t.Errorf(res.err.Error())
+	if res.Err != nil {
+		t.Errorf(res.Err.Error())
 		return
 	}
 
@@ -1068,7 +1068,7 @@ func TestDeadLetterRedrive(t *testing.T) {
 		queues:    map[string]*queue{},
 	}
 
-	req := newReq(
+	req := NewReq(
 		"CreateQueue",
 		"a",
 		map[string]string{"QueueName": "deadLetter"},
@@ -1080,7 +1080,7 @@ func TestDeadLetterRedrive(t *testing.T) {
 	<-req.resC
 	dlq := queueByName("deadLetter", ctl.queues)
 
-	req = newReq(
+	req = NewReq(
 		"CreateQueue",
 		"b",
 		map[string]string{"QueueName": "queue1"},
@@ -1100,12 +1100,12 @@ func TestDeadLetterRedrive(t *testing.T) {
 		t.Fatal(err)
 		return
 	}
-	msg.received = 2
+	msg.Received = 2
 	msg.deadline = time.Now().UTC().Add(time.Second * -10)
 	q1.inflightMessages.PushBack(msg)
 
 	// redrive to dead-letter
-	creationTsBefore := msg.createdTimestamp
+	creationTsBefore := msg.CreatedTimestamp
 	ctl.handleInflight()
 
 	// test
@@ -1123,15 +1123,15 @@ func TestDeadLetterRedrive(t *testing.T) {
 		return
 	}
 
-	creationTsAfter := msg.createdTimestamp
+	creationTsAfter := msg.CreatedTimestamp
 	if !creationTsAfter.Equal(creationTsBefore) {
 		t.Error("Creation date has changed after redrive")
 		return
 	}
 
-	if msg.received != 2 {
+	if msg.Received != 2 {
 		t.Errorf(
-			"'received' counter must not be reset or changed after redrive. Got %d", msg.received,
+			"'received' counter must not be reset or changed after redrive. Got %d", msg.Received,
 		)
 	}
 }
@@ -1149,7 +1149,7 @@ func TestDeleteDeadLetter(t *testing.T) {
 		queues:    map[string]*queue{},
 	}
 
-	req := newReq(
+	req := NewReq(
 		"CreateQueue",
 		"a",
 		map[string]string{"QueueName": "deadLetter"},
@@ -1161,7 +1161,7 @@ func TestDeleteDeadLetter(t *testing.T) {
 	<-req.resC
 	dlq := queueByName("deadLetter", ctl.queues)
 
-	req = newReq(
+	req = NewReq(
 		"CreateQueue",
 		"b",
 		map[string]string{"QueueName": "queue1"},
@@ -1176,7 +1176,7 @@ func TestDeleteDeadLetter(t *testing.T) {
 	q1 := queueByName("queue1", ctl.queues)
 
 	// delete dead-letter
-	req = newReq(
+	req = NewReq(
 		"DeleteQueue",
 		"c",
 		map[string]string{"QueueUrl": dlq.url},
@@ -1187,13 +1187,13 @@ func TestDeleteDeadLetter(t *testing.T) {
 	}()
 	res := <-req.resC
 
-	if res.err != nil {
-		t.Errorf(res.err.Error())
+	if res.Err != nil {
+		t.Errorf(res.Err.Error())
 		return
 	}
 
 	//re-create the dead-letter queue
-	req = newReq(
+	req = NewReq(
 		"CreateQueue",
 		"d",
 		map[string]string{"QueueName": "deadLetter"},
@@ -1211,7 +1211,7 @@ func TestDeleteDeadLetter(t *testing.T) {
 		t.Fatal(err)
 		return
 	}
-	msg.received = 2
+	msg.Received = 2
 	msg.deadline = time.Now().UTC().Add(time.Second * -10)
 	q1.inflightMessages.PushBack(msg)
 

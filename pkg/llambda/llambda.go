@@ -29,24 +29,6 @@ type Instance struct {
 	// TODO: align
 }
 
-// ReqResult of a request process
-type ReqResult struct {
-	Data interface{}
-	Err  error
-	// extra data to be used by some errors like custom messages
-	ErrData interface{}
-}
-
-// Request is used to interact with the LLambda processor.
-type Request struct {
-	Action string
-	ID     string
-	// request params
-	Params interface{}
-	// channel to read the request result from
-	ResC chan *ReqResult
-}
-
 var (
 	// ErrResourceConflict maps to ResourceConflictException
 	ErrResourceConflict = errors.New("ResourceConflictException")
@@ -71,11 +53,11 @@ forloop:
 	for {
 		select {
 		case req := <-reqC:
-			switch req.Action {
+			switch req.action {
 			case "CreateFunction":
 				i.createFunction(req)
 			default:
-				req.ResC <- &ReqResult{Err: fmt.Errorf("%q not implemented", req.Action)}
+				req.resC <- &ReqResult{Err: fmt.Errorf("%q not implemented", req.action)}
 				break
 			}
 		case <-stopC:
@@ -88,10 +70,10 @@ forloop:
 
 func (i *Instance) createFunction(req Request) {
 
-	params := req.Params.(ReqCreateFunction)
+	params := req.params.(ReqCreateFunction)
 
 	if _, exists := i.functions[params.FunctionName]; exists {
-		req.ResC <- &ReqResult{
+		req.resC <- &ReqResult{
 			Err:     ErrResourceConflict,
 			ErrData: "function already exist: " + params.FunctionName,
 		}
@@ -100,7 +82,7 @@ func (i *Instance) createFunction(req Request) {
 
 	u, err := uuid.NewRandom()
 	if err != nil {
-		req.ResC <- &ReqResult{Err: err}
+		req.resC <- &ReqResult{Err: err}
 		return
 	}
 	revID := u.String()
@@ -109,7 +91,7 @@ func (i *Instance) createFunction(req Request) {
 	lrn := "arn:aws:lambda:" + i.Region + ":" + i.AccountID + ":function:" + fName
 
 	if src, ok := params.Code["ZipFile"]; !ok {
-		req.ResC <- &ReqResult{Err: fmt.Errorf("unsupported code source %q", src)}
+		req.resC <- &ReqResult{Err: fmt.Errorf("unsupported code source %q", src)}
 		return
 	}
 
@@ -118,14 +100,14 @@ func (i *Instance) createFunction(req Request) {
 
 	_, err = base64.StdEncoding.Decode(buf, []byte(params.Code["ZipFile"]))
 	if err != nil {
-		req.ResC <- &ReqResult{Err: err}
+		req.resC <- &ReqResult{Err: err}
 		return
 	}
 
 	codeFolder := path.Join(i.codePath, fName)
 	codeSize, err := storeFunctionCode(codeFolder, "code.zip", buf)
 	if err != nil {
-		req.ResC <- &ReqResult{Err: err}
+		req.resC <- &ReqResult{Err: err}
 		return
 	}
 
@@ -150,7 +132,7 @@ func (i *Instance) createFunction(req Request) {
 
 	i.functions[f.name] = &f
 	codeHash := sha256.Sum256(buf)
-	req.ResC <- &ReqResult{
+	req.resC <- &ReqResult{
 		Data: map[string]interface{}{
 			"CodeSha256":  fmt.Sprintf("%x", codeHash),
 			"CodeSize":    codeSize,

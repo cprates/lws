@@ -35,7 +35,7 @@ type queue struct {
 }
 
 type longPollRequest struct {
-	originalReq         *request
+	originalReq         *Request
 	deadline            time.Time
 	maxNumberOfMessages int
 }
@@ -50,15 +50,15 @@ func (q *queue) purgeQueue() {
 func (q *queue) deleteMessage(receiptHandle string) bool {
 
 	for e := q.inflightMessages.Front(); e != nil; e = e.Next() {
-		if e.Value.(*message).receiptHandle == receiptHandle {
+		if e.Value.(*Message).ReceiptHandle == receiptHandle {
 			q.inflightMessages.Remove(e)
 			return true
 		}
 	}
 
 	for e := q.messages.Front(); e != nil; e = e.Next() {
-		msg := e.Value.(*message)
-		if msg.receiptHandle != "" && msg.receiptHandle == receiptHandle {
+		msg := e.Value.(*Message)
+		if msg.ReceiptHandle != "" && msg.ReceiptHandle == receiptHandle {
 			q.messages.Remove(e)
 			return true
 		}
@@ -67,7 +67,7 @@ func (q *queue) deleteMessage(receiptHandle string) bool {
 	return false
 }
 
-func (q *queue) takeUpTo(n int) (msgs []*message) {
+func (q *queue) takeUpTo(n int) (msgs []*Message) {
 
 	for i := 0; i < n; i++ {
 		elem := q.messages.PullFront()
@@ -75,13 +75,13 @@ func (q *queue) takeUpTo(n int) (msgs []*message) {
 			break
 		}
 
-		msgs = append(msgs, elem.(*message))
+		msgs = append(msgs, elem.(*Message))
 	}
 
 	return
 }
 
-func (q *queue) setInflight(messages []*message) {
+func (q *queue) setInflight(messages []*Message) {
 
 	if len(messages) == 0 {
 		return
@@ -89,13 +89,13 @@ func (q *queue) setInflight(messages []*message) {
 
 	elements := list.New()
 	for _, msg := range messages {
-		msg.received++
+		msg.Received++
 		// simplified version of an receipt handler
 		u, err := uuid.NewRandom()
 		if err != nil {
 			return
 		}
-		msg.receiptHandle = u.String()
+		msg.ReceiptHandle = u.String()
 		msg.deadline = time.Now().UTC().Add(time.Duration(q.visibilityTimeout) * time.Second)
 		elements.PushBack(msg)
 	}
@@ -104,14 +104,14 @@ func (q *queue) setInflight(messages []*message) {
 	q.inflightMessages.Sort(deadlineCmp)
 }
 
-func (q *queue) setDelayed(msg *message, delaySeconds time.Duration) {
+func (q *queue) setDelayed(msg *Message, delaySeconds time.Duration) {
 
 	msg.deadline = time.Now().UTC().Add(delaySeconds)
 	q.delayedMessages.PushFront(msg)
 	q.delayedMessages.Sort(deadlineCmp)
 }
 
-func (q *queue) setOnWait(originalReq *request, uptoMessages int, waitSeconds time.Duration) {
+func (q *queue) setOnWait(originalReq *Request, uptoMessages int, waitSeconds time.Duration) {
 
 	req := &longPollRequest{
 		originalReq:         originalReq,
