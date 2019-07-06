@@ -40,6 +40,9 @@ var (
 	ErrInvalidAttributeName = errors.New("invalid attribute name")
 )
 
+// FmtURL defines the format of a Queue URL
+const FmtURL = "%s://sqs.%s.queue.%s/%s/%s"
+
 // New returns a ready to use LSQS instance.
 func New(accountID, region, scheme, host string) LSqs {
 	return &lSqs{
@@ -301,7 +304,7 @@ func validateRedrivePolicy(
 func (l *lSqs) createQueue(req Request) {
 
 	name := req.params["QueueName"]
-	url := fmt.Sprintf("%s://%s.queue.%s/%s/%s", l.scheme, l.region, l.host, l.accountID, name)
+	url := fmt.Sprintf(FmtURL, l.scheme, l.region, l.host, l.accountID, name)
 	lrn := fmt.Sprintf("arn:aws:sqs:%s:%s:%s", l.region, l.accountID, name)
 	ts := time.Now().Unix()
 	newQ := &queue{

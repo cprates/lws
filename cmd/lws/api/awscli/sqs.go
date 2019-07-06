@@ -75,7 +75,7 @@ func sqsDispatcher(
 	if qName, ok := vars["QueueName"]; ok {
 		if _, hasURL := params["QueueUrl"]; !hasURL {
 			params["QueueUrl"] = fmt.Sprintf(
-				"%s://%s.queue.%s/%s/%s",
+				lsqs.FmtURL,
 				viper.GetString("service.protocol"),
 				viper.GetString("service.region"),
 				viper.GetString("service.addr"),
