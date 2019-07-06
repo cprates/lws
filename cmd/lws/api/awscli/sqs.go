@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/cprates/lws/common"
+	"github.com/cprates/lws/pkg/lerr"
 	"github.com/cprates/lws/pkg/lsqs"
 )
 
@@ -99,6 +100,36 @@ func sqsDispatcher(
 	return rv[0].Interface().(common.Result)
 }
 
+// ErrNonExistentQueueRes is for generate a result when the specified queue doesn't exist.
+func ErrNonExistentQueueRes(reqID string) common.Result {
+	return common.Result{
+		Status: 400,
+		Err: &lerr.Result{
+			Result: lerr.Details{
+				Type:      "Sender",
+				Code:      "AWS.SimpleQueueService.NonExistentQueue",
+				Message:   "The specified queue does not exist.",
+				RequestID: reqID,
+			},
+		},
+	}
+}
+
+// ErrQueueAlreadyExistsRes is for make our life easier when generating QueueAlreadyExists errors.
+func ErrQueueAlreadyExistsRes(msg, reqID string) common.Result {
+	return common.Result{
+		Status: 400,
+		Err: &lerr.Result{
+			Result: lerr.Details{
+				Type:      "Sender",
+				Code:      "QueueAlreadyExists",
+				Message:   msg,
+				RequestID: reqID,
+			},
+		},
+	}
+}
+
 // CreateQueue creates a new queue.
 func (s SqsAPI) CreateQueue(
 	ctx context.Context,
@@ -117,7 +148,7 @@ func (s SqsAPI) CreateQueue(
 		switch res.Err {
 		case lsqs.ErrAlreadyExists:
 			msg := "A queue already exists with the same name and a different value for attribute(s) " + res.ErrData.(string)
-			return lsqs.ErrQueueAlreadyExistsRes(msg, reqID)
+			return ErrQueueAlreadyExistsRes(msg, reqID)
 		case lsqs.ErrInvalidParameterValue:
 			return common.ErrInvalidParameterValueRes(res.ErrData.(string), reqID)
 		default:
@@ -165,7 +196,7 @@ func (s SqsAPI) DeleteMessage(
 	if res.Err != nil {
 		switch res.Err {
 		case lsqs.ErrNonExistentQueue:
-			return lsqs.ErrNonExistentQueueRes(reqID)
+			return ErrNonExistentQueueRes(reqID)
 		default:
 			return common.ErrInternalErrorRes(res.Err.Error(), reqID)
 		}
@@ -238,7 +269,7 @@ func (s SqsAPI) GetQueueAttributes(
 	if res.Err != nil {
 		switch res.Err {
 		case lsqs.ErrNonExistentQueue:
-			return lsqs.ErrNonExistentQueueRes(reqID)
+			return ErrNonExistentQueueRes(reqID)
 		default:
 			return common.ErrInternalErrorRes(res.Err.Error(), reqID)
 		}
@@ -293,7 +324,7 @@ func (s SqsAPI) GetQueueUrl(
 	if res.Err != nil {
 		switch res.Err {
 		case lsqs.ErrNonExistentQueue:
-			return lsqs.ErrNonExistentQueueRes(reqID)
+			return ErrNonExistentQueueRes(reqID)
 		default:
 			return common.ErrInternalErrorRes(res.Err.Error(), reqID)
 		}
@@ -337,7 +368,7 @@ func (s SqsAPI) ListDeadLetterSourceQueues(
 	if res.Err != nil {
 		switch res.Err {
 		case lsqs.ErrNonExistentQueue:
-			return lsqs.ErrNonExistentQueueRes(reqID)
+			return ErrNonExistentQueueRes(reqID)
 		default:
 			return common.ErrInternalErrorRes(res.Err.Error(), reqID)
 		}
@@ -414,7 +445,7 @@ func (s SqsAPI) PurgeQueue(
 	if res.Err != nil {
 		switch res.Err {
 		case lsqs.ErrNonExistentQueue:
-			return lsqs.ErrNonExistentQueueRes(reqID)
+			return ErrNonExistentQueueRes(reqID)
 		default:
 			return common.ErrInternalErrorRes(res.Err.Error(), reqID)
 		}
@@ -525,7 +556,7 @@ func (s SqsAPI) SendMessage(
 		case lsqs.ErrInvalidParameterValue:
 			return common.ErrInvalidParameterValueRes(res.ErrData.(string), reqID)
 		case lsqs.ErrNonExistentQueue:
-			return lsqs.ErrNonExistentQueueRes(reqID)
+			return ErrNonExistentQueueRes(reqID)
 		default:
 			return common.ErrInternalErrorRes(res.Err.Error(), reqID)
 		}
