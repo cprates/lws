@@ -26,6 +26,7 @@ type dispatchFunc func(
 	path string,
 	params map[string]string,
 	attributes map[string]string,
+	vars map[string]string,
 ) common.Result
 
 // Install an AWS CLI compatible interface to serve HTTP requests.
@@ -36,32 +37,6 @@ func Install(router *mux.Router, region, account, proto, addr string) AwsCli {
 	awsCli.InstallLambda(router, region, account, proto, addr, viper.GetString("lambda.codePath"))
 
 	return awsCli
-}
-
-// service tries to get the service name from the Authorization info. The service name
-// is usually in the URL host name, but that's not true if setting a custom endpoint to be
-// used by multiple different services. As a workaround it gets it from the Authorization info
-// from the Authorization header, query string or POST body, according to
-// https://docs.aws.amazon.com/general/latest/gr/sigv4-signed-request-examples.html#sig-v4-examples-get-query-string
-// TODO: should find a better way. DNS doesn't seem the way to go though (affects entire machine)
-func service(params url.Values, headers http.Header) string {
-
-	var auth string
-	if a, ok := headers["Authorization"]; ok {
-		auth = a[0]
-	} else if a, ok := params["Authorization"]; ok {
-		auth = a[0]
-	}
-
-	var service string
-	parts := strings.Split(auth, ",")
-	for _, p := range parts {
-		if s := strings.Split(p, "/"); len(s) == 5 {
-			service = s[3]
-		}
-	}
-
-	return service
 }
 
 // commonDispatcher returns a function to dispatch requests to the correct endpoints
@@ -103,16 +78,9 @@ func commonDispatcher(dispatcherF dispatchFunc) http.HandlerFunc {
 			return
 		}
 
-		service := service(params, r.Header)
-		if service == "" {
-			log.Errorln("Authorization info not present or invalid,", reqID)
-			onAccessDenied(w, viper.GetString("service.protocol")+"://"+r.Host, reqID)
-			return
-		}
-
 		ctx := context.WithValue(context.Background(), common.ReqIDKey{}, reqID)
 		p, a := flattAndParse(params)
-		res := dispatcherF(ctx, reqID, r.Method, r.RequestURI, p, a)
+		res := dispatcherF(ctx, reqID, r.Method, r.RequestURI, p, a, mux.Vars(r))
 		if res.Status != 200 {
 			log.Debugln("Failed serving req", reqID, res.Err)
 			onLwsErr(w, res)

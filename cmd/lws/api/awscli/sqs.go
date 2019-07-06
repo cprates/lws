@@ -3,11 +3,13 @@ package awscli
 import (
 	"context"
 	"encoding/xml"
+	"fmt"
 	"net/url"
 	"reflect"
 
 	"github.com/gorilla/mux"
 	log "github.com/sirupsen/logrus"
+	"github.com/spf13/viper"
 
 	"github.com/cprates/lws/common"
 	"github.com/cprates/lws/pkg/lsqs"
@@ -47,7 +49,7 @@ func (a AwsCli) InstallSQS(router *mux.Router, region, account, proto, addr stri
 		sqsAction[mt.Name] = mv
 	}
 
-	// SQS requests (and SNS) have no distinct path
+	router.HandleFunc("/queue/{QueueName}", commonDispatcher(sqsDispatcher))
 	router.HandleFunc("/", commonDispatcher(sqsDispatcher))
 }
 
@@ -58,6 +60,7 @@ func sqsDispatcher(
 	path string,
 	params map[string]string,
 	attributes map[string]string,
+	vars map[string]string,
 ) common.Result {
 
 	action := params["Action"]
@@ -65,6 +68,25 @@ func sqsDispatcher(
 	if !ok {
 		msg := "Not implemented or unknown action " + action
 		return common.ErrInvalidActionRes(msg, reqID)
+	}
+
+	// tries to inject queue URL and QueueName when not present as parameter if used
+	// endpoint is /queue/{qName}
+	if qName, ok := vars["QueueName"]; ok {
+		if _, hasURL := params["QueueUrl"]; !hasURL {
+			params["QueueUrl"] = fmt.Sprintf(
+				"%s://%s.queue.%s/%s/%s",
+				viper.GetString("service.protocol"),
+				viper.GetString("service.region"),
+				viper.GetString("service.addr"),
+				viper.GetString("service.accountId"),
+				qName,
+			)
+		}
+
+		if qName, hasQName := params["QueueName"]; !hasQName {
+			params["QueueName"] = qName
+		}
 	}
 
 	input := []reflect.Value{
