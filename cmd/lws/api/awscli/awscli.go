@@ -13,7 +13,6 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 
-	"github.com/cprates/lws/common"
 	"github.com/cprates/lws/pkg/awsapi"
 )
 
@@ -79,7 +78,7 @@ func commonDispatcher(dispatcherF dispatchFunc) http.HandlerFunc {
 			return
 		}
 
-		ctx := context.WithValue(context.Background(), common.ReqIDKey{}, reqID)
+		ctx := context.WithValue(context.Background(), awsapi.ReqIDKey{}, reqID)
 		p, a := flattAndParse(params)
 		res := dispatcherF(ctx, reqID, r.Method, r.RequestURI, p, a, mux.Vars(r))
 		if res.Status != 200 {

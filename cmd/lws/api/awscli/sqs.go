@@ -11,7 +11,6 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 
-	"github.com/cprates/lws/common"
 	"github.com/cprates/lws/pkg/awsapi"
 	"github.com/cprates/lws/pkg/lerr"
 	"github.com/cprates/lws/pkg/lsqs"
@@ -138,7 +137,7 @@ func (s SqsAPI) CreateQueue(
 	attributes map[string]string,
 ) awsapi.Response {
 
-	reqID := ctx.Value(common.ReqIDKey{}).(string)
+	reqID := ctx.Value(awsapi.ReqIDKey{}).(string)
 
 	if _, present := params["QueueName"]; !present {
 		return awsapi.ErrMissingParamRes("QueueName is a required parameter", reqID)
@@ -184,7 +183,7 @@ func (s SqsAPI) DeleteMessage(
 	attributes map[string]string,
 ) awsapi.Response {
 
-	reqID := ctx.Value(common.ReqIDKey{}).(string)
+	reqID := ctx.Value(awsapi.ReqIDKey{}).(string)
 
 	if _, present := params["QueueUrl"]; !present {
 		return awsapi.ErrMissingParamRes("QueueUrl is a required parameter", reqID)
@@ -226,7 +225,7 @@ func (s SqsAPI) DeleteQueue(
 	attributes map[string]string,
 ) awsapi.Response {
 
-	reqID := ctx.Value(common.ReqIDKey{}).(string)
+	reqID := ctx.Value(awsapi.ReqIDKey{}).(string)
 
 	if _, present := params["QueueUrl"]; !present {
 		return awsapi.ErrMissingParamRes("QueueUrl is a required parameter", reqID)
@@ -260,7 +259,7 @@ func (s SqsAPI) GetQueueAttributes(
 	attributes map[string]string,
 ) awsapi.Response {
 
-	reqID := ctx.Value(common.ReqIDKey{}).(string)
+	reqID := ctx.Value(awsapi.ReqIDKey{}).(string)
 
 	if _, present := params["QueueUrl"]; !present {
 		return awsapi.ErrMissingParamRes("QueueUrl is a required parameter", reqID)
@@ -315,7 +314,7 @@ func (s SqsAPI) GetQueueUrl(
 	attributes map[string]string,
 ) awsapi.Response {
 
-	reqID := ctx.Value(common.ReqIDKey{}).(string)
+	reqID := ctx.Value(awsapi.ReqIDKey{}).(string)
 
 	if _, present := params["QueueName"]; !present {
 		return awsapi.ErrMissingParamRes("QueueName is a required parameter", reqID)
@@ -359,7 +358,7 @@ func (s SqsAPI) ListDeadLetterSourceQueues(
 	attributes map[string]string,
 ) awsapi.Response {
 
-	reqID := ctx.Value(common.ReqIDKey{}).(string)
+	reqID := ctx.Value(awsapi.ReqIDKey{}).(string)
 
 	if _, present := params["QueueUrl"]; !present {
 		return awsapi.ErrMissingParamRes("QueueUrl is a required parameter", reqID)
@@ -402,7 +401,7 @@ func (s SqsAPI) ListQueues(
 	attributes map[string]string,
 ) awsapi.Response {
 
-	reqID := ctx.Value(common.ReqIDKey{}).(string)
+	reqID := ctx.Value(awsapi.ReqIDKey{}).(string)
 
 	res := lsqs.PushReq(s.pushC, "ListQueues", reqID, params, attributes)
 	if res.Err != nil {
@@ -436,7 +435,7 @@ func (s SqsAPI) PurgeQueue(
 	attributes map[string]string,
 ) awsapi.Response {
 
-	reqID := ctx.Value(common.ReqIDKey{}).(string)
+	reqID := ctx.Value(awsapi.ReqIDKey{}).(string)
 
 	if _, present := params["QueueUrl"]; !present {
 		return awsapi.ErrMissingParamRes("QueueUrl is a required parameter", reqID)
@@ -475,7 +474,7 @@ func (s SqsAPI) ReceiveMessage(
 	attributes map[string]string,
 ) awsapi.Response {
 
-	reqID := ctx.Value(common.ReqIDKey{}).(string)
+	reqID := ctx.Value(awsapi.ReqIDKey{}).(string)
 
 	if _, present := params["QueueUrl"]; !present {
 		return awsapi.ErrMissingParamRes("QueueUrl is a required parameter", reqID)
@@ -536,7 +535,7 @@ func (s SqsAPI) SendMessage(
 	attributes map[string]string,
 ) awsapi.Response {
 
-	reqID := ctx.Value(common.ReqIDKey{}).(string)
+	reqID := ctx.Value(awsapi.ReqIDKey{}).(string)
 
 	if _, present := params["QueueUrl"]; !present {
 		return awsapi.ErrMissingParamRes("QueueUrl is a required parameter", reqID)
@@ -594,7 +593,7 @@ func (s SqsAPI) SetQueueAttributes(
 	attributes map[string]string,
 ) awsapi.Response {
 
-	reqID := ctx.Value(common.ReqIDKey{}).(string)
+	reqID := ctx.Value(awsapi.ReqIDKey{}).(string)
 
 	if _, present := params["QueueUrl"]; !present {
 		return awsapi.ErrMissingParamRes("QueueUrl is a required parameter", reqID)
