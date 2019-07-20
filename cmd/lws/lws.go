@@ -10,7 +10,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 
-	"github.com/cprates/lws/cmd/lws/api/awscli"
+	"github.com/cprates/lws/pkg/awsapi"
 )
 
 func init() {
@@ -47,12 +47,16 @@ func main() {
 	log.Println("Starting LWS...")
 
 	addr := viper.GetString("service.addr")
-	proto := viper.GetString("service.protocol")
-	region := viper.GetString("service.region")
-	account := viper.GetString("service.accountId")
 
 	s := newServer()
-	awscli.Install(s.router, region, account, proto, addr)
+	awsapi.Install(
+		s.router,
+		viper.GetString("service.region"),
+		viper.GetString("service.accountId"),
+		viper.GetString("service.protocol"),
+		addr,
+		viper.GetString("lambda.codePath"),
+	)
 
 	log.Println("Listening on", addr)
 	log.Fatal(http.ListenAndServe(addr, s.router))

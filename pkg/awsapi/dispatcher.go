@@ -1,23 +1,21 @@
-package awscli
+package awsapi
 
 import (
 	"context"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	log "github.com/sirupsen/logrus"
-	"github.com/spf13/viper"
 
-	"github.com/cprates/lws/pkg/awsapi"
+	"github.com/cprates/lws/pkg/lsqs"
 )
-
-// AwsCli represents an instance of an AWS CLI compatible interface.
-type AwsCli struct{}
 
 type dispatchFunc func(
 	ctx context.Context,
@@ -27,21 +25,11 @@ type dispatchFunc func(
 	params map[string]string,
 	attributes map[string]string,
 	vars map[string]string,
-) awsapi.Response
-
-// Install an AWS CLI compatible interface to serve HTTP requests.
-func Install(router *mux.Router, region, account, proto, addr string) AwsCli {
-
-	awsCli := AwsCli{}
-	awsCli.InstallSQS(router, region, account, proto, addr)
-	awsCli.InstallLambda(router, region, account, proto, addr, viper.GetString("lambda.codePath"))
-
-	return awsCli
-}
+) Response
 
 // commonDispatcher returns a function to dispatch requests to the correct endpoints
 // based on the Action parameter. This dispatcher will serve requests for LSQS and LSNS.
-func commonDispatcher(dispatcherF dispatchFunc) http.HandlerFunc {
+func (a AwsAPI) commonDispatcher(dispatcherF dispatchFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		u, err := uuid.NewRandom()
 		if err != nil {
@@ -78,7 +66,8 @@ func commonDispatcher(dispatcherF dispatchFunc) http.HandlerFunc {
 			return
 		}
 
-		ctx := context.WithValue(context.Background(), awsapi.ReqIDKey{}, reqID)
+		ctx := context.WithValue(context.Background(), ReqIDKey{}, reqID)
+		ctx = context.WithValue(ctx, AwsAPI{}, a)
 		p, a := flattAndParse(params)
 		res := dispatcherF(ctx, reqID, r.Method, r.RequestURI, p, a, mux.Vars(r))
 		if res.Status != 200 {
@@ -93,6 +82,53 @@ func commonDispatcher(dispatcherF dispatchFunc) http.HandlerFunc {
 			log.Errorln("Unexpected error, request", reqID, err)
 		}
 	}
+}
+
+func sqsDispatcher(
+	ctx context.Context,
+	reqID string,
+	method string,
+	path string,
+	params map[string]string,
+	attributes map[string]string,
+	vars map[string]string,
+) Response {
+
+	action := params["Action"]
+	actionM, ok := sqsAction[action]
+	if !ok {
+		msg := "Not implemented or unknown action " + action
+		return ErrInvalidActionRes(msg, reqID)
+	}
+
+	api := ctx.Value(AwsAPI{}).(AwsAPI)
+	// tries to inject queue URL and QueueName when not present as parameter if used
+	// endpoint is /queue/{qName}
+	if qName, ok := vars["QueueName"]; ok {
+		if _, hasURL := params["QueueUrl"]; !hasURL {
+			params["QueueUrl"] = fmt.Sprintf(
+				lsqs.FmtURL,
+				api.proto,
+				api.region,
+				api.addr,
+				api.account,
+				qName,
+			)
+		}
+
+		if qName, hasQName := params["QueueName"]; !hasQName {
+			params["QueueName"] = qName
+		}
+	}
+
+	input := []reflect.Value{
+		reflect.ValueOf(ctx),
+		reflect.ValueOf(params),
+		reflect.ValueOf(attributes),
+	}
+
+	rv := actionM.Call(input)
+	return rv[0].Interface().(Response)
 }
 
 // flattAndParse flatten the given map, and parse attributes, converting them into key

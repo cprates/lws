@@ -1,4 +1,4 @@
-package awscli
+package awsapi
 
 import "testing"
 

@@ -1,4 +1,4 @@
-package awscli
+package awsapi
 
 import (
 	"encoding/json"
@@ -10,7 +10,6 @@ import (
 	"github.com/gorilla/mux"
 	log "github.com/sirupsen/logrus"
 
-	"github.com/cprates/lws/pkg/awsapi"
 	"github.com/cprates/lws/pkg/llambda"
 )
 
@@ -26,7 +25,7 @@ var runtimes = []string{
 }
 
 // InstallLambda installs Lambda service and starts a new instance of LLambda.
-func (a AwsCli) InstallLambda(
+func (a AwsAPI) InstallLambda(
 	router *mux.Router,
 	region, accountID, scheme, host, codePath string,
 ) {
@@ -162,7 +161,7 @@ func createFunction(api *LambdaAPI) http.HandlerFunc {
 			return
 		}
 
-		reqRes := awsapi.SuccessRes(buf, reqID)
+		reqRes := SuccessRes(buf, reqID)
 		w.WriteHeader(201)
 		_, err = w.Write(reqRes.Result)
 		if err != nil {
