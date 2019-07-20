@@ -1,9 +1,9 @@
-package common
+package awsapi
 
 import "github.com/cprates/lws/pkg/lerr"
 
-// Result is the result of a call to a service API method.
-type Result struct {
+// Response is the result of a call to a service API method.
+type Response struct {
 	// Maps directly to HTTP status codes
 	Status int
 	ReqID  string
@@ -12,8 +12,8 @@ type Result struct {
 }
 
 // ErrMissingParamRes is for generating AWS compatible MissingParameter error.
-func ErrMissingParamRes(msg, reqID string) Result {
-	return Result{
+func ErrMissingParamRes(msg, reqID string) Response {
+	return Response{
 		Status: 400,
 		Err: &lerr.Result{
 			Result: lerr.Details{
@@ -27,8 +27,8 @@ func ErrMissingParamRes(msg, reqID string) Result {
 }
 
 // ErrNotImplementedRes generates our custom error for not implemented actions.
-func ErrNotImplementedRes(reqID string) Result {
-	return Result{
+func ErrNotImplementedRes(reqID string) Response {
+	return Response{
 		Status: 400,
 		Err: &lerr.Result{
 			Result: lerr.Details{
@@ -42,8 +42,8 @@ func ErrNotImplementedRes(reqID string) Result {
 }
 
 // ErrInternalErrorRes is for make our life easier when generating internal error results.
-func ErrInternalErrorRes(msg, reqID string) Result {
-	return Result{
+func ErrInternalErrorRes(msg, reqID string) Response {
+	return Response{
 		Status: 500,
 		Err: &lerr.Result{
 			Result: lerr.Details{
@@ -57,8 +57,8 @@ func ErrInternalErrorRes(msg, reqID string) Result {
 }
 
 // ErrInvalidActionRes generates an InvalidAction error.
-func ErrInvalidActionRes(msg, reqID string) Result {
-	return Result{
+func ErrInvalidActionRes(msg, reqID string) Response {
+	return Response{
 		Status: 400,
 		Err: &lerr.Result{
 			Result: lerr.Details{
@@ -72,8 +72,8 @@ func ErrInvalidActionRes(msg, reqID string) Result {
 }
 
 // ErrInvalidAttributeNameRes generates an InvalidAttributeName error.
-func ErrInvalidAttributeNameRes(msg, reqID string) Result {
-	return Result{
+func ErrInvalidAttributeNameRes(msg, reqID string) Response {
+	return Response{
 		Status: 400,
 		Err: &lerr.Result{
 			Result: lerr.Details{
@@ -87,8 +87,8 @@ func ErrInvalidAttributeNameRes(msg, reqID string) Result {
 }
 
 // ErrInvalidParameterValueRes generates an InvalidParameterValue error.
-func ErrInvalidParameterValueRes(msg, reqID string) Result {
-	return Result{
+func ErrInvalidParameterValueRes(msg, reqID string) Response {
+	return Response{
 		Status: 400,
 		Err: &lerr.Result{
 			Result: lerr.Details{
@@ -102,8 +102,8 @@ func ErrInvalidParameterValueRes(msg, reqID string) Result {
 }
 
 // SuccessRes is for make our life easier when generating a success result.
-func SuccessRes(res []byte, reqID string) Result {
-	return Result{
+func SuccessRes(res []byte, reqID string) Response {
+	return Response{
 		Status: 200,
 		ReqID:  reqID,
 		Result: res,

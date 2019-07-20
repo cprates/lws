@@ -10,7 +10,7 @@ import (
 	"github.com/gorilla/mux"
 	log "github.com/sirupsen/logrus"
 
-	"github.com/cprates/lws/common"
+	"github.com/cprates/lws/pkg/awsapi"
 	"github.com/cprates/lws/pkg/llambda"
 )
 
@@ -162,7 +162,7 @@ func createFunction(api *LambdaAPI) http.HandlerFunc {
 			return
 		}
 
-		reqRes := common.SuccessRes(buf, reqID)
+		reqRes := awsapi.SuccessRes(buf, reqID)
 		w.WriteHeader(201)
 		_, err = w.Write(reqRes.Result)
 		if err != nil {

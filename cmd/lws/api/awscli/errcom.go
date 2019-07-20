@@ -7,7 +7,7 @@ import (
 
 	log "github.com/sirupsen/logrus"
 
-	"github.com/cprates/lws/common"
+	"github.com/cprates/lws/pkg/awsapi"
 	"github.com/cprates/lws/pkg/lerr"
 )
 
@@ -25,7 +25,7 @@ func onAccessDenied(w http.ResponseWriter, res, reqID string) {
 	writeErr(w, http.StatusForbidden, err)
 }
 
-func onLwsErr(w http.ResponseWriter, r common.Result) {
+func onLwsErr(w http.ResponseWriter, r awsapi.Response) {
 
 	w.WriteHeader(r.Status)
 	enc := xml.NewEncoder(w)

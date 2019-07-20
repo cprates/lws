@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/cprates/lws/common"
+	"github.com/cprates/lws/pkg/awsapi"
 )
 
 // AwsCli represents an instance of an AWS CLI compatible interface.
@@ -27,7 +28,7 @@ type dispatchFunc func(
 	params map[string]string,
 	attributes map[string]string,
 	vars map[string]string,
-) common.Result
+) awsapi.Response
 
 // Install an AWS CLI compatible interface to serve HTTP requests.
 func Install(router *mux.Router, region, account, proto, addr string) AwsCli {
