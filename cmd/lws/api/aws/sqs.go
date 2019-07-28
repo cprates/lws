@@ -1,4 +1,4 @@
-package awsapi
+package aws
 
 import (
 	"context"
@@ -9,33 +9,38 @@ import (
 	"github.com/gorilla/mux"
 	log "github.com/sirupsen/logrus"
 
-	"github.com/cprates/lws/pkg/lerr"
 	"github.com/cprates/lws/pkg/lsqs"
 )
 
 // SqsAPI is the receiver for all SQS API methods.
 type SqsAPI struct {
-	instance lsqs.LSqs
-	pushC    chan lsqs.Request
-	stopC    chan struct{}
+	handle SqsHandler
 }
+
+// SqsResult contains the result of any request to LSQS.
+type SqsResult struct {
+	// varies depending on the action. For CreateQueue is just a string containing
+	// the newly created queue's URL, for GetQueueAttributes is a map with queue's attributes
+	Data interface{}
+	Err  error
+	// extra data to be used by some errors like custom messages
+	ErrData interface{}
+}
+
+// SqsHandler is the bridge between the SQS API and an SQS core. Receives the name of the action,
+// request id for debug purposes and the http parameters and attributes as described by the AWS
+// documentation, and returns the result of the operation.
+type SqsHandler func(action, reqID string, params, attributes map[string]string) (res SqsResult)
 
 var sqsAction = map[string]reflect.Value{}
 
-// InstallSQS installs SQS service and starts a new instance of LSqs.
-func (a AwsAPI) InstallSQS(router *mux.Router, region, account, proto, addr string) {
+// InstallSQS routes on the given router
+func (i Interface) InstallSQS(router *mux.Router, handler SqsHandler) {
 
 	log.Println("Installing SQS service")
 
-	instance := lsqs.New(account, region, proto, addr)
-	pushC := make(chan lsqs.Request)
-	stopC := make(chan struct{})
-	go instance.Process(pushC, stopC)
-
 	api := &SqsAPI{
-		instance: instance,
-		pushC:    pushC,
-		stopC:    stopC,
+		handle: handler,
 	}
 
 	lt := reflect.TypeOf(api)
@@ -47,16 +52,16 @@ func (a AwsAPI) InstallSQS(router *mux.Router, region, account, proto, addr stri
 		sqsAction[mt.Name] = mv
 	}
 
-	router.HandleFunc("/queue/{QueueName}", a.commonDispatcher(sqsDispatcher))
-	router.HandleFunc("/", a.commonDispatcher(sqsDispatcher))
+	router.HandleFunc("/queue/{QueueName}", i.commonDispatcher(sqsDispatcher))
+	router.HandleFunc("/", i.commonDispatcher(sqsDispatcher))
 }
 
 // ErrNonExistentQueueRes is for generate a result when the specified queue doesn't exist.
 func ErrNonExistentQueueRes(reqID string) Response {
 	return Response{
 		Status: 400,
-		Err: &lerr.Result{
-			Result: lerr.Details{
+		Err: &ResponseErr{
+			Details: Details{
 				Type:      "Sender",
 				Code:      "AWS.SimpleQueueService.NonExistentQueue",
 				Message:   "The specified queue does not exist.",
@@ -70,8 +75,8 @@ func ErrNonExistentQueueRes(reqID string) Response {
 func ErrQueueAlreadyExistsRes(msg, reqID string) Response {
 	return Response{
 		Status: 400,
-		Err: &lerr.Result{
-			Result: lerr.Details{
+		Err: &ResponseErr{
+			Details: Details{
 				Type:      "Sender",
 				Code:      "QueueAlreadyExists",
 				Message:   msg,
@@ -94,17 +99,16 @@ func (s SqsAPI) CreateQueue(
 		return ErrMissingParamRes("QueueName is a required parameter", reqID)
 	}
 
-	res := lsqs.PushReq(s.pushC, "CreateQueue", reqID, params, attributes)
-	if res.Err != nil {
-		switch res.Err {
-		case lsqs.ErrAlreadyExists:
-			msg := "A queue already exists with the same name and a different value for attribute(s) " + res.ErrData.(string)
-			return ErrQueueAlreadyExistsRes(msg, reqID)
-		case lsqs.ErrInvalidParameterValue:
-			return ErrInvalidParameterValueRes(res.ErrData.(string), reqID)
-		default:
-			return ErrInternalErrorRes(res.Err.Error(), reqID)
-		}
+	res := s.handle("CreateQueue", reqID, params, attributes)
+	switch res.Err {
+	case nil:
+	case lsqs.ErrAlreadyExists:
+		msg := "A queue already exists with the same name and a different value for attribute(s) " + res.ErrData.(string)
+		return ErrQueueAlreadyExistsRes(msg, reqID)
+	case lsqs.ErrInvalidParameterValue:
+		return ErrInvalidParameterValueRes(res.ErrData.(string), reqID)
+	default:
+		return ErrInternalErrorRes(res.Err.Error(), reqID)
 	}
 
 	xmlData := struct {
@@ -143,14 +147,13 @@ func (s SqsAPI) DeleteMessage(
 		return ErrMissingParamRes("ReceiptHandle is a required parameter", reqID)
 	}
 
-	res := lsqs.PushReq(s.pushC, "DeleteMessage", reqID, params, attributes)
-	if res.Err != nil {
-		switch res.Err {
-		case lsqs.ErrNonExistentQueue:
-			return ErrNonExistentQueueRes(reqID)
-		default:
-			return ErrInternalErrorRes(res.Err.Error(), reqID)
-		}
+	res := s.handle("DeleteMessage", reqID, params, attributes)
+	switch res.Err {
+	case nil:
+	case lsqs.ErrNonExistentQueue:
+		return ErrNonExistentQueueRes(reqID)
+	default:
+		return ErrInternalErrorRes(res.Err.Error(), reqID)
 	}
 
 	xmlData := struct {
@@ -182,7 +185,7 @@ func (s SqsAPI) DeleteQueue(
 		return ErrMissingParamRes("QueueUrl is a required parameter", reqID)
 	}
 
-	res := lsqs.PushReq(s.pushC, "DeleteQueue", reqID, params, attributes)
+	res := s.handle("DeleteQueue", reqID, params, attributes)
 	if res.Err != nil {
 		return ErrInternalErrorRes(res.Err.Error(), reqID)
 	}
@@ -216,14 +219,13 @@ func (s SqsAPI) GetQueueAttributes(
 		return ErrMissingParamRes("QueueUrl is a required parameter", reqID)
 	}
 
-	res := lsqs.PushReq(s.pushC, "GetQueueAttributes", reqID, params, attributes)
-	if res.Err != nil {
-		switch res.Err {
-		case lsqs.ErrNonExistentQueue:
-			return ErrNonExistentQueueRes(reqID)
-		default:
-			return ErrInternalErrorRes(res.Err.Error(), reqID)
-		}
+	res := s.handle("GetQueueAttributes", reqID, params, attributes)
+	switch res.Err {
+	case nil:
+	case lsqs.ErrNonExistentQueue:
+		return ErrNonExistentQueueRes(reqID)
+	default:
+		return ErrInternalErrorRes(res.Err.Error(), reqID)
 	}
 
 	xmlData := struct {
@@ -271,14 +273,13 @@ func (s SqsAPI) GetQueueUrl(
 		return ErrMissingParamRes("QueueName is a required parameter", reqID)
 	}
 
-	res := lsqs.PushReq(s.pushC, "GetQueueUrl", reqID, params, attributes)
-	if res.Err != nil {
-		switch res.Err {
-		case lsqs.ErrNonExistentQueue:
-			return ErrNonExistentQueueRes(reqID)
-		default:
-			return ErrInternalErrorRes(res.Err.Error(), reqID)
-		}
+	res := s.handle("GetQueueUrl", reqID, params, attributes)
+	switch res.Err {
+	case nil:
+	case lsqs.ErrNonExistentQueue:
+		return ErrNonExistentQueueRes(reqID)
+	default:
+		return ErrInternalErrorRes(res.Err.Error(), reqID)
 	}
 
 	xmlData := struct {
@@ -315,14 +316,13 @@ func (s SqsAPI) ListDeadLetterSourceQueues(
 		return ErrMissingParamRes("QueueUrl is a required parameter", reqID)
 	}
 
-	res := lsqs.PushReq(s.pushC, "ListDeadLetterSourceQueues", reqID, params, attributes)
-	if res.Err != nil {
-		switch res.Err {
-		case lsqs.ErrNonExistentQueue:
-			return ErrNonExistentQueueRes(reqID)
-		default:
-			return ErrInternalErrorRes(res.Err.Error(), reqID)
-		}
+	res := s.handle("ListDeadLetterSourceQueues", reqID, params, attributes)
+	switch res.Err {
+	case nil:
+	case lsqs.ErrNonExistentQueue:
+		return ErrNonExistentQueueRes(reqID)
+	default:
+		return ErrInternalErrorRes(res.Err.Error(), reqID)
 	}
 
 	xmlData := struct {
@@ -354,7 +354,7 @@ func (s SqsAPI) ListQueues(
 
 	reqID := ctx.Value(ReqIDKey{}).(string)
 
-	res := lsqs.PushReq(s.pushC, "ListQueues", reqID, params, attributes)
+	res := s.handle("ListQueues", reqID, params, attributes)
 	if res.Err != nil {
 		return ErrInternalErrorRes(res.Err.Error(), reqID)
 	}
@@ -392,14 +392,13 @@ func (s SqsAPI) PurgeQueue(
 		return ErrMissingParamRes("QueueUrl is a required parameter", reqID)
 	}
 
-	res := lsqs.PushReq(s.pushC, "PurgeQueue", reqID, params, attributes)
-	if res.Err != nil {
-		switch res.Err {
-		case lsqs.ErrNonExistentQueue:
-			return ErrNonExistentQueueRes(reqID)
-		default:
-			return ErrInternalErrorRes(res.Err.Error(), reqID)
-		}
+	res := s.handle("PurgeQueue", reqID, params, attributes)
+	switch res.Err {
+	case nil:
+	case lsqs.ErrNonExistentQueue:
+		return ErrNonExistentQueueRes(reqID)
+	default:
+		return ErrInternalErrorRes(res.Err.Error(), reqID)
 	}
 
 	xmlData := struct {
@@ -431,14 +430,15 @@ func (s SqsAPI) ReceiveMessage(
 		return ErrMissingParamRes("QueueUrl is a required parameter", reqID)
 	}
 
-	res := lsqs.PushReq(s.pushC, "ReceiveMessage", reqID, params, attributes)
-	if res.Err != nil {
-		switch res.Err {
-		case lsqs.ErrInvalidParameterValue:
-			return ErrInvalidParameterValueRes(res.ErrData.(string), reqID)
-		default:
-			return ErrInternalErrorRes(res.Err.Error(), reqID)
-		}
+	res := s.handle("ReceiveMessage", reqID, params, attributes)
+	switch res.Err {
+	case nil:
+	case lsqs.ErrNonExistentQueue:
+		return ErrNonExistentQueueRes(reqID)
+	case lsqs.ErrInvalidParameterValue:
+		return ErrInvalidParameterValueRes(res.ErrData.(string), reqID)
+	default:
+		return ErrInternalErrorRes(res.Err.Error(), reqID)
 	}
 
 	type Message struct {
@@ -501,16 +501,15 @@ func (s SqsAPI) SendMessage(
 	}
 	params["MessageBody"] = escaped
 
-	res := lsqs.PushReq(s.pushC, "SendMessage", reqID, params, attributes)
-	if res.Err != nil {
-		switch res.Err {
-		case lsqs.ErrInvalidParameterValue:
-			return ErrInvalidParameterValueRes(res.ErrData.(string), reqID)
-		case lsqs.ErrNonExistentQueue:
-			return ErrNonExistentQueueRes(reqID)
-		default:
-			return ErrInternalErrorRes(res.Err.Error(), reqID)
-		}
+	res := s.handle("SendMessage", reqID, params, attributes)
+	switch res.Err {
+	case nil:
+	case lsqs.ErrInvalidParameterValue:
+		return ErrInvalidParameterValueRes(res.ErrData.(string), reqID)
+	case lsqs.ErrNonExistentQueue:
+		return ErrNonExistentQueueRes(reqID)
+	default:
+		return ErrInternalErrorRes(res.Err.Error(), reqID)
 	}
 
 	xmlData := struct {
@@ -550,16 +549,15 @@ func (s SqsAPI) SetQueueAttributes(
 		return ErrMissingParamRes("QueueUrl is a required parameter", reqID)
 	}
 
-	res := lsqs.PushReq(s.pushC, "SetQueueAttributes", reqID, params, attributes)
-	if res.Err != nil {
-		switch res.Err {
-		case lsqs.ErrInvalidAttributeName:
-			return ErrInvalidAttributeNameRes(res.ErrData.(string), reqID)
-		case lsqs.ErrInvalidParameterValue:
-			return ErrInvalidParameterValueRes(res.ErrData.(string), reqID)
-		default:
-			return ErrInternalErrorRes(res.Err.Error(), reqID)
-		}
+	res := s.handle("SetQueueAttributes", reqID, params, attributes)
+	switch res.Err {
+	case nil:
+	case lsqs.ErrInvalidAttributeName:
+		return ErrInvalidAttributeNameRes(res.ErrData.(string), reqID)
+	case lsqs.ErrInvalidParameterValue:
+		return ErrInvalidParameterValueRes(res.ErrData.(string), reqID)
+	default:
+		return ErrInternalErrorRes(res.Err.Error(), reqID)
 	}
 
 	xmlData := struct {

@@ -10,7 +10,8 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 
-	"github.com/cprates/lws/pkg/awsapi"
+	"github.com/cprates/lws/cmd/lws/api/aws"
+	"github.com/cprates/lws/pkg/lsqs"
 )
 
 func init() {
@@ -46,17 +47,36 @@ func main() {
 
 	log.Println("Starting LWS...")
 
+	region := viper.GetString("service.region")
+	account := viper.GetString("service.accountId")
+	proto := viper.GetString("service.protocol")
 	addr := viper.GetString("service.addr")
+	codePath := viper.GetString("lambda.codePath")
 
 	s := newServer()
-	awsapi.Install(
-		s.router,
-		viper.GetString("service.region"),
-		viper.GetString("service.accountId"),
-		viper.GetString("service.protocol"),
+	awsAPI := aws.New(
+		region,
+		account,
+		proto,
 		addr,
-		viper.GetString("lambda.codePath"),
+		codePath,
 	)
+
+	stopC := make(chan struct{})
+	pushC := lsqs.Init(account, region, proto, addr, stopC)
+
+	awsAPI.InstallSQS(
+		s.router,
+		func(action, reqID string, params, attributes map[string]string) (res aws.SqsResult) {
+			r := lsqs.PushReq(pushC, action, reqID, params, attributes)
+			res.Data = r.Data
+			res.Err = r.Err
+			res.ErrData = r.ErrData
+			return
+		},
+	)
+
+	awsAPI.InstallLambda(s.router, region, account, proto, addr, codePath)
 
 	log.Println("Listening on", addr)
 	log.Fatal(http.ListenAndServe(addr, s.router))

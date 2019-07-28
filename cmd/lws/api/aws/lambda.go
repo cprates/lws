@@ -1,4 +1,4 @@
-package awsapi
+package aws
 
 import (
 	"encoding/json"
@@ -25,7 +25,7 @@ var runtimes = []string{
 }
 
 // InstallLambda installs Lambda service and starts a new instance of LLambda.
-func (a AwsAPI) InstallLambda(
+func (i Interface) InstallLambda(
 	router *mux.Router,
 	region, accountID, scheme, host, codePath string,
 ) {

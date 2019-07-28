@@ -1,6 +1,23 @@
-package awsapi
+package aws
 
-import "github.com/cprates/lws/pkg/lerr"
+import "fmt"
+
+// Details contains details of an AWS compatible error.
+type Details struct {
+	Code      string `xml:"Code,omitempty"`
+	Message   string `xml:"Message,omitempty"`
+	RequestID string `xml:"RequestId,omitempty"`
+	Type      string `xml:"Type,omitempty"`
+}
+
+// ResponseErr is the root of an AWS compatible error response.
+type ResponseErr struct {
+	Details Details `xml:"Error"`
+}
+
+func (e ResponseErr) Error() string {
+	return fmt.Sprintf("error %s(%s)", e.Details.Code, e.Details.Message)
+}
 
 // Response is the result of a call to a service API method.
 type Response struct {
@@ -8,15 +25,15 @@ type Response struct {
 	Status int
 	ReqID  string
 	Result []byte // XML
-	Err    *lerr.Result
+	Err    *ResponseErr
 }
 
 // ErrMissingParamRes is for generating AWS compatible MissingParameter error.
 func ErrMissingParamRes(msg, reqID string) Response {
 	return Response{
 		Status: 400,
-		Err: &lerr.Result{
-			Result: lerr.Details{
+		Err: &ResponseErr{
+			Details: Details{
 				Type:      "Sender",
 				Code:      "MissingParameter",
 				Message:   msg,
@@ -30,8 +47,8 @@ func ErrMissingParamRes(msg, reqID string) Response {
 func ErrNotImplementedRes(reqID string) Response {
 	return Response{
 		Status: 400,
-		Err: &lerr.Result{
-			Result: lerr.Details{
+		Err: &ResponseErr{
+			Details: Details{
 				Type:      "Sender",
 				Code:      "InvalidAction",
 				Message:   "not implemented",
@@ -45,8 +62,8 @@ func ErrNotImplementedRes(reqID string) Response {
 func ErrInternalErrorRes(msg, reqID string) Response {
 	return Response{
 		Status: 500,
-		Err: &lerr.Result{
-			Result: lerr.Details{
+		Err: &ResponseErr{
+			Details: Details{
 				Type:      "Internal",
 				Code:      "InternalFailure",
 				Message:   msg,
@@ -60,8 +77,8 @@ func ErrInternalErrorRes(msg, reqID string) Response {
 func ErrInvalidActionRes(msg, reqID string) Response {
 	return Response{
 		Status: 400,
-		Err: &lerr.Result{
-			Result: lerr.Details{
+		Err: &ResponseErr{
+			Details: Details{
 				Type:      "Sender",
 				Code:      "InvalidAction",
 				Message:   msg,
@@ -75,8 +92,8 @@ func ErrInvalidActionRes(msg, reqID string) Response {
 func ErrInvalidAttributeNameRes(msg, reqID string) Response {
 	return Response{
 		Status: 400,
-		Err: &lerr.Result{
-			Result: lerr.Details{
+		Err: &ResponseErr{
+			Details: Details{
 				Type:      "Sender",
 				Code:      "InvalidAttributeName",
 				Message:   msg,
@@ -90,8 +107,8 @@ func ErrInvalidAttributeNameRes(msg, reqID string) Response {
 func ErrInvalidParameterValueRes(msg, reqID string) Response {
 	return Response{
 		Status: 400,
-		Err: &lerr.Result{
-			Result: lerr.Details{
+		Err: &ResponseErr{
+			Details: Details{
 				Type:      "Sender",
 				Code:      "InvalidParameterValue",
 				Message:   msg,

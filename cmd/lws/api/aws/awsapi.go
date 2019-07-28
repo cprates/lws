@@ -1,4 +1,4 @@
-package awsapi
+package aws
 
 import (
 	"encoding/xml"
@@ -6,15 +6,33 @@ import (
 	"net/http"
 
 	log "github.com/sirupsen/logrus"
-
-	"github.com/cprates/lws/pkg/lerr"
 )
+
+// Interface represents an AWS API compatible interface.
+type Interface struct {
+	region   string
+	account  string
+	proto    string
+	addr     string
+	codePath string
+}
+
+// New AWS API compatible interface to serve HTTP requests.
+func New(region, account, proto, addr, codePath string) Interface {
+	return Interface{
+		region:   region,
+		account:  account,
+		proto:    proto,
+		addr:     addr,
+		codePath: codePath,
+	}
+}
 
 func onAccessDenied(w http.ResponseWriter, res, reqID string) {
 
 	msg := fmt.Sprintf("Access to the resource %s is denied.", res)
-	err := lerr.Result{
-		Result: lerr.Details{
+	err := ResponseErr{
+		Details: Details{
 			Type:      "Sender",
 			Code:      "AccessDenied",
 			Message:   msg,
@@ -35,8 +53,8 @@ func onLwsErr(w http.ResponseWriter, r Response) {
 
 func onInvalidParameterValue(w http.ResponseWriter, srv, reqID string) {
 
-	err := lerr.Result{
-		Result: lerr.Details{
+	err := ResponseErr{
+		Details: Details{
 			Type:      "Sender",
 			Code:      "InvalidParameterValue",
 			Message:   "Invalid or unsupported service " + srv,
@@ -46,7 +64,7 @@ func onInvalidParameterValue(w http.ResponseWriter, srv, reqID string) {
 	writeErr(w, http.StatusBadRequest, err)
 }
 
-func writeErr(w http.ResponseWriter, status int, err lerr.Result) {
+func writeErr(w http.ResponseWriter, status int, err ResponseErr) {
 
 	w.WriteHeader(status)
 	enc := xml.NewEncoder(w)

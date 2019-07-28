@@ -43,15 +43,22 @@ var (
 // FmtURL defines the format of a Queue URL
 const FmtURL = "%s://sqs.%s.queue.%s/%s/%s"
 
-// New returns a ready to use LSQS instance.
-func New(accountID, region, scheme, host string) LSqs {
-	return &lSqs{
+// Init a new LSQS instance with the given configuration and returns a channel to
+// communicate with it.
+func Init(accountID, region, scheme, host string, stopC chan struct{}) chan Request {
+
+	pushC := make(chan Request)
+	instance := &lSqs{
 		accountID: accountID,
 		region:    region,
 		scheme:    scheme,
 		host:      host,
 		queues:    map[string]*queue{},
 	}
+
+	go instance.Process(pushC, stopC)
+
+	return pushC
 }
 
 // TODO: doc

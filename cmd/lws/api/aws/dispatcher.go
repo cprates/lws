@@ -1,4 +1,4 @@
-package awsapi
+package aws
 
 import (
 	"context"
@@ -29,7 +29,7 @@ type dispatchFunc func(
 
 // commonDispatcher returns a function to dispatch requests to the correct endpoints
 // based on the Action parameter. This dispatcher will serve requests for LSQS and LSNS.
-func (a AwsAPI) commonDispatcher(dispatcherF dispatchFunc) http.HandlerFunc {
+func (i Interface) commonDispatcher(dispatcherF dispatchFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		u, err := uuid.NewRandom()
 		if err != nil {
@@ -67,7 +67,7 @@ func (a AwsAPI) commonDispatcher(dispatcherF dispatchFunc) http.HandlerFunc {
 		}
 
 		ctx := context.WithValue(context.Background(), ReqIDKey{}, reqID)
-		ctx = context.WithValue(ctx, AwsAPI{}, a)
+		ctx = context.WithValue(ctx, Interface{}, i)
 		p, a := flattAndParse(params)
 		res := dispatcherF(ctx, reqID, r.Method, r.RequestURI, p, a, mux.Vars(r))
 		if res.Status != 200 {
@@ -101,7 +101,7 @@ func sqsDispatcher(
 		return ErrInvalidActionRes(msg, reqID)
 	}
 
-	api := ctx.Value(AwsAPI{}).(AwsAPI)
+	api := ctx.Value(Interface{}).(Interface)
 	// tries to inject queue URL and QueueName when not present as parameter if used
 	// endpoint is /queue/{qName}
 	if qName, ok := vars["QueueName"]; ok {
