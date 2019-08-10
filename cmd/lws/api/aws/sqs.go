@@ -52,6 +52,8 @@ func (i Interface) InstallSQS(router *mux.Router, handler SqsHandler) {
 		sqsAction[mt.Name] = mv
 	}
 
+	// {Account} is being ignored
+	router.HandleFunc("/{Account}/{QueueName}", i.commonDispatcher(sqsDispatcher))
 	router.HandleFunc("/queue/{QueueName}", i.commonDispatcher(sqsDispatcher))
 	router.HandleFunc("/", i.commonDispatcher(sqsDispatcher))
 }

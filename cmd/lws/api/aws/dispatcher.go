@@ -102,8 +102,8 @@ func sqsDispatcher(
 	}
 
 	api := ctx.Value(Interface{}).(Interface)
-	// tries to inject queue URL and QueueName when not present as parameter if used
-	// endpoint is /queue/{qName}
+	// tries to inject queue URL and QueueName when not present as parameter if the used
+	// endpoint is /queue/{QueueName} or /{Account}/{QueueName}
 	if qName, ok := vars["QueueName"]; ok {
 		if _, hasURL := params["QueueUrl"]; !hasURL {
 			params["QueueUrl"] = fmt.Sprintf(
