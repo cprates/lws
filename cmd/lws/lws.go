@@ -63,18 +63,8 @@ func main() {
 	)
 
 	stopC := make(chan struct{})
-	pushC := lsqs.Init(account, region, proto, addr, stopC)
-
-	awsAPI.InstallSQS(
-		s.router,
-		func(action, reqID string, params, attributes map[string]string) (res aws.SqsResult) {
-			r := lsqs.PushReq(pushC, action, reqID, params, attributes)
-			res.Data = r.Data
-			res.Err = r.Err
-			res.ErrData = r.ErrData
-			return
-		},
-	)
+	pushC := lsqs.Start(account, region, proto, addr, stopC)
+	awsAPI.InstallSQS(s.router, pushC)
 
 	awsAPI.InstallLambda(s.router, region, account, proto, addr, codePath)
 

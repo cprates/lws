@@ -202,12 +202,11 @@ func TestCreateQueueAndProperties(t *testing.T) {
 
 	for _, test := range testsSet {
 
-		req := NewReq("CreateQueue", "a", test.params, test.attrs)
-
+		resC := make(chan ReqResult)
 		go func() {
-			ctl.createQueue(req)
+			CreateQueue(test.params, test.attrs, resC)(ctl)
 		}()
-		res := <-req.resC
+		res := <-resC
 
 		if test.expectedErr != nil || res.Err != nil {
 			if test.expectedErr != res.Err {
@@ -261,30 +260,28 @@ func TestGetQueueAttributes(t *testing.T) {
 		queues:    map[string]*queue{},
 	}
 
-	req := NewReq(
-		"CreateQueue",
-		"b",
-		map[string]string{"QueueName": "deadletter"},
-		map[string]string{},
-	)
+	resC := make(chan ReqResult)
 	go func() {
-		ctl.createQueue(req)
+		CreateQueue(
+			map[string]string{"QueueName": "deadletter"},
+			map[string]string{},
+			resC,
+		)(ctl)
 	}()
-	<-req.resC
+	<-resC
 	dlq := queueByName("deadletter", ctl.queues)
 
-	req = NewReq(
-		"CreateQueue",
-		"a",
-		map[string]string{"QueueName": "queue1"},
-		map[string]string{
-			"RedrivePolicy": `{"deadLetterTargetArn":"` + dlq.lrn + `","maxReceiveCount":"1000"}`,
-		},
-	)
 	go func() {
-		ctl.createQueue(req)
+		CreateQueue(
+			map[string]string{"QueueName": "queue1"},
+			map[string]string{
+				"RedrivePolicy": `{"deadLetterTargetArn":"` +
+					dlq.lrn + `","maxReceiveCount":"1000"}`,
+			},
+			resC,
+		)(ctl)
 	}()
-	<-req.resC
+	<-resC
 
 	q := queueByName("queue1", ctl.queues)
 	msg, err := newMessage(ctl, []byte("body"), 0, 60*time.Second)
@@ -356,11 +353,11 @@ func TestGetQueueAttributes(t *testing.T) {
 	}
 
 	for _, test := range testsSet {
-		req = NewReq("GetQueueAttributes", "c", test.params, test.attrs)
+		resC := make(chan ReqResult)
 		go func() {
-			ctl.getQueueAttributes(req)
+			GetQueueAttributes(test.params, test.attrs, resC)(ctl)
 		}()
-		res := <-req.resC
+		res := <-resC
 
 		if test.expectedErr != nil || res.Err != nil {
 			if test.expectedErr != res.Err {
@@ -404,28 +401,25 @@ func TestSetQueueAttributes(t *testing.T) {
 		queues:    map[string]*queue{},
 	}
 
-	req := NewReq(
-		"CreateQueue",
-		"b",
-		map[string]string{"QueueName": "deadletter"},
-		map[string]string{},
-	)
+	resC := make(chan ReqResult)
 	go func() {
-		ctl.createQueue(req)
+		CreateQueue(
+			map[string]string{"QueueName": "deadletter"},
+			map[string]string{},
+			resC,
+		)(ctl)
 	}()
-	<-req.resC
+	<-resC
 	dlq := queueByName("deadletter", ctl.queues)
 
-	req = NewReq(
-		"CreateQueue",
-		"a",
-		map[string]string{"QueueName": "queue1"},
-		map[string]string{},
-	)
 	go func() {
-		ctl.createQueue(req)
+		CreateQueue(
+			map[string]string{"QueueName": "queue1"},
+			map[string]string{},
+			resC,
+		)(ctl)
 	}()
-	<-req.resC
+	<-resC
 
 	q := queueByName("queue1", ctl.queues)
 
@@ -597,11 +591,11 @@ func TestSetQueueAttributes(t *testing.T) {
 	}
 
 	for _, test := range testsSet {
-		req = NewReq("SetQueueAttributes", "c", test.params, test.attrs)
+		resC := make(chan ReqResult)
 		go func() {
-			ctl.setQueueAttributes(req)
+			SetQueueAttributes(test.params, test.attrs, resC)(ctl)
 		}()
-		res := <-req.resC
+		res := <-resC
 
 		if test.expectedErr != nil || res.Err != nil {
 			if test.expectedErr != res.Err {
@@ -691,28 +685,25 @@ func TestInflightHandler(t *testing.T) {
 		queues:    map[string]*queue{},
 	}
 
-	req := NewReq(
-		"CreateQueue",
-		"a",
-		map[string]string{"QueueName": "queue1"},
-		map[string]string{},
-	)
+	resC := make(chan ReqResult)
 	go func() {
-		ctl.createQueue(req)
+		CreateQueue(
+			map[string]string{"QueueName": "queue1"},
+			map[string]string{},
+			resC,
+		)(ctl)
 	}()
-	<-req.resC
+	<-resC
 	q1 := queueByName("queue1", ctl.queues)
 
-	req = NewReq(
-		"CreateQueue",
-		"b",
-		map[string]string{"QueueName": "queue2", "MessageRetentionPeriod": "60"},
-		map[string]string{},
-	)
 	go func() {
-		ctl.createQueue(req)
+		CreateQueue(
+			map[string]string{"QueueName": "queue2", "MessageRetentionPeriod": "60"},
+			map[string]string{},
+			resC,
+		)(ctl)
 	}()
-	<-req.resC
+	<-resC
 
 	q2 := queueByName("queue2", ctl.queues)
 
@@ -776,28 +767,25 @@ func TestRetentionHandler(t *testing.T) {
 		queues:    map[string]*queue{},
 	}
 
-	req := NewReq(
-		"CreateQueue",
-		"a",
-		map[string]string{"QueueName": "queue1", "MessageRetentionPeriod": "60"},
-		map[string]string{},
-	)
+	resC := make(chan ReqResult)
 	go func() {
-		ctl.createQueue(req)
+		CreateQueue(
+			map[string]string{"QueueName": "queue1", "MessageRetentionPeriod": "60"},
+			map[string]string{},
+			resC,
+		)(ctl)
 	}()
-	<-req.resC
+	<-resC
 	q1 := queueByName("queue1", ctl.queues)
 
-	req = NewReq(
-		"CreateQueue",
-		"b",
-		map[string]string{"QueueName": "queue2", "MessageRetentionPeriod": "60"},
-		map[string]string{},
-	)
 	go func() {
-		ctl.createQueue(req)
+		CreateQueue(
+			map[string]string{"QueueName": "queue2", "MessageRetentionPeriod": "60"},
+			map[string]string{},
+			resC,
+		)(ctl)
 	}()
-	<-req.resC
+	<-resC
 
 	q2 := queueByName("queue2", ctl.queues)
 
@@ -848,16 +836,15 @@ func TestDeleteMessage(t *testing.T) {
 		queues:    map[string]*queue{},
 	}
 
-	req := NewReq(
-		"CreateQueue",
-		"a",
-		map[string]string{"QueueName": "queue1", "MessageRetentionPeriod": "60"},
-		map[string]string{},
-	)
+	resC := make(chan ReqResult)
 	go func() {
-		ctl.createQueue(req)
+		CreateQueue(
+			map[string]string{"QueueName": "queue1", "MessageRetentionPeriod": "60"},
+			map[string]string{},
+			resC,
+		)(ctl)
 	}()
-	<-req.resC
+	<-resC
 	q1 := queueByName("queue1", ctl.queues)
 
 	createAndPushMsg := func(instance *lSqs, l *list.List, body, rHandle string) {
@@ -877,20 +864,16 @@ func TestDeleteMessage(t *testing.T) {
 	createAndPushMsg(ctl, q1.inflightMessages, "body21", "receiptHandle21")
 
 	// Delete queued message
-	req = NewReq(
-		"DeleteMessage",
-		"a",
-		map[string]string{
-			"QueueUrl":      q1.url,
-			"ReceiptHandle": "receiptHandle12",
-		},
-		map[string]string{},
-	)
-
 	go func() {
-		ctl.deleteMessage(req)
+		DeleteMessage(
+			map[string]string{
+				"QueueUrl":      q1.url,
+				"ReceiptHandle": "receiptHandle12",
+			},
+			resC,
+		)(ctl)
 	}()
-	res := <-req.resC
+	res := <-resC
 
 	if res.Err != nil {
 		t.Errorf(res.Err.Error())
@@ -904,20 +887,16 @@ func TestDeleteMessage(t *testing.T) {
 	}
 
 	// Delete inflight message
-	req = NewReq(
-		"DeleteMessage",
-		"a",
-		map[string]string{
-			"QueueUrl":      q1.url,
-			"ReceiptHandle": "receiptHandle21",
-		},
-		map[string]string{},
-	)
-
 	go func() {
-		ctl.deleteMessage(req)
+		DeleteMessage(
+			map[string]string{
+				"QueueUrl":      q1.url,
+				"ReceiptHandle": "receiptHandle21",
+			},
+			resC,
+		)(ctl)
 	}()
-	res = <-req.resC
+	res = <-resC
 
 	if res.Err != nil {
 		t.Errorf(res.Err.Error())
@@ -931,20 +910,16 @@ func TestDeleteMessage(t *testing.T) {
 	}
 
 	// tries to delete non-existing receipt handle
-	req = NewReq(
-		"DeleteMessage",
-		"a",
-		map[string]string{
-			"QueueUrl":      q1.url,
-			"ReceiptHandle": "wtf",
-		},
-		map[string]string{},
-	)
-
 	go func() {
-		ctl.deleteMessage(req)
+		DeleteMessage(
+			map[string]string{
+				"QueueUrl":      q1.url,
+				"ReceiptHandle": "wtf",
+			},
+			resC,
+		)(ctl)
 	}()
-	res = <-req.resC
+	res = <-resC
 
 	if res.Err != nil {
 		t.Errorf(res.Err.Error())
@@ -962,20 +937,16 @@ func TestDeleteMessage(t *testing.T) {
 	}
 
 	// tries to delete a message on a non-existing queue
-	req = NewReq(
-		"DeleteMessage",
-		"a",
-		map[string]string{
-			"QueueUrl":      "wtfqueue",
-			"ReceiptHandle": "wtf",
-		},
-		map[string]string{},
-	)
-
 	go func() {
-		ctl.deleteMessage(req)
+		DeleteMessage(
+			map[string]string{
+				"QueueUrl":      "wtfqueue",
+				"ReceiptHandle": "wtf",
+			},
+			resC,
+		)(ctl)
 	}()
-	res = <-req.resC
+	res = <-resC
 
 	if res.Err != ErrNonExistentQueue {
 		t.Errorf(
@@ -995,16 +966,15 @@ func TestPurgeQueue(t *testing.T) {
 		queues:    map[string]*queue{},
 	}
 
-	req := NewReq(
-		"CreateQueue",
-		"a",
-		map[string]string{"QueueName": "queue1", "MessageRetentionPeriod": "60"},
-		map[string]string{},
-	)
+	resC := make(chan ReqResult)
 	go func() {
-		ctl.createQueue(req)
+		CreateQueue(
+			map[string]string{"QueueName": "queue1", "MessageRetentionPeriod": "60"},
+			map[string]string{},
+			resC,
+		)(ctl)
 	}()
-	<-req.resC
+	<-resC
 	q1 := queueByName("queue1", ctl.queues)
 
 	createAndPushMsg := func(instance *lSqs, l *list.List, body, rHandle string) {
@@ -1022,19 +992,15 @@ func TestPurgeQueue(t *testing.T) {
 	createAndPushMsg(ctl, q1.delayedMessages, "body30", "")
 
 	// Purge queue
-	req = NewReq(
-		"PurgeQueue",
-		"a",
-		map[string]string{
-			"QueueUrl": q1.url,
-		},
-		map[string]string{},
-	)
-
 	go func() {
-		ctl.purgeQueue(req)
+		PurgeQueue(
+			map[string]string{
+				"QueueUrl": q1.url,
+			},
+			resC,
+		)(ctl)
 	}()
-	res := <-req.resC
+	res := <-resC
 
 	if res.Err != nil {
 		t.Errorf(res.Err.Error())
@@ -1068,30 +1034,27 @@ func TestDeadLetterRedrive(t *testing.T) {
 		queues:    map[string]*queue{},
 	}
 
-	req := NewReq(
-		"CreateQueue",
-		"a",
-		map[string]string{"QueueName": "deadLetter"},
-		map[string]string{},
-	)
+	resC := make(chan ReqResult)
 	go func() {
-		ctl.createQueue(req)
+		CreateQueue(
+			map[string]string{"QueueName": "deadLetter"},
+			map[string]string{},
+			resC,
+		)(ctl)
 	}()
-	<-req.resC
+	<-resC
 	dlq := queueByName("deadLetter", ctl.queues)
 
-	req = NewReq(
-		"CreateQueue",
-		"b",
-		map[string]string{"QueueName": "queue1"},
-		map[string]string{
-			"RedrivePolicy": `{"deadLetterTargetArn":"` + dlq.lrn + `","maxReceiveCount":"2"}`,
-		},
-	)
 	go func() {
-		ctl.createQueue(req)
+		CreateQueue(
+			map[string]string{"QueueName": "queue1"},
+			map[string]string{
+				"RedrivePolicy": `{"deadLetterTargetArn":"` + dlq.lrn + `","maxReceiveCount":"2"}`,
+			},
+			resC,
+		)(ctl)
 	}()
-	<-req.resC
+	<-resC
 	q1 := queueByName("queue1", ctl.queues)
 
 	// send message
@@ -1149,43 +1112,34 @@ func TestDeleteDeadLetter(t *testing.T) {
 		queues:    map[string]*queue{},
 	}
 
-	req := NewReq(
-		"CreateQueue",
-		"a",
-		map[string]string{"QueueName": "deadLetter"},
-		map[string]string{},
-	)
+	resC := make(chan ReqResult)
 	go func() {
-		ctl.createQueue(req)
+		CreateQueue(
+			map[string]string{"QueueName": "deadLetter"},
+			map[string]string{},
+			resC,
+		)(ctl)
 	}()
-	<-req.resC
+	<-resC
 	dlq := queueByName("deadLetter", ctl.queues)
 
-	req = NewReq(
-		"CreateQueue",
-		"b",
-		map[string]string{"QueueName": "queue1"},
-		map[string]string{
-			"RedrivePolicy": `{"deadLetterTargetArn":"` + dlq.lrn + `","maxReceiveCount":"2"}`,
-		},
-	)
 	go func() {
-		ctl.createQueue(req)
+		CreateQueue(
+			map[string]string{"QueueName": "queue1"},
+			map[string]string{
+				"RedrivePolicy": `{"deadLetterTargetArn":"` + dlq.lrn + `","maxReceiveCount":"2"}`,
+			},
+			resC,
+		)(ctl)
 	}()
-	<-req.resC
+	<-resC
 	q1 := queueByName("queue1", ctl.queues)
 
 	// delete dead-letter
-	req = NewReq(
-		"DeleteQueue",
-		"c",
-		map[string]string{"QueueUrl": dlq.url},
-		map[string]string{},
-	)
 	go func() {
-		ctl.deleteQueue(req)
+		DeleteQueue(map[string]string{"QueueUrl": dlq.url}, resC)(ctl)
 	}()
-	res := <-req.resC
+	res := <-resC
 
 	if res.Err != nil {
 		t.Errorf(res.Err.Error())
@@ -1193,16 +1147,14 @@ func TestDeleteDeadLetter(t *testing.T) {
 	}
 
 	//re-create the dead-letter queue
-	req = NewReq(
-		"CreateQueue",
-		"d",
-		map[string]string{"QueueName": "deadLetter"},
-		map[string]string{},
-	)
 	go func() {
-		ctl.createQueue(req)
+		CreateQueue(
+			map[string]string{"QueueName": "deadLetter"},
+			map[string]string{},
+			resC,
+		)(ctl)
 	}()
-	<-req.resC
+	<-resC
 	dlq = queueByName("deadLetter", ctl.queues)
 
 	// send message

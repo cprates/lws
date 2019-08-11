@@ -14,7 +14,7 @@ import (
 
 // SqsAPI is the receiver for all SQS API methods.
 type SqsAPI struct {
-	handle SqsHandler
+	pushC chan<- lsqs.Action
 }
 
 // SqsResult contains the result of any request to LSQS.
@@ -27,20 +27,15 @@ type SqsResult struct {
 	ErrData interface{}
 }
 
-// SqsHandler is the bridge between the SQS API and an SQS core. Receives the name of the action,
-// request id for debug purposes and the http parameters and attributes as described by the AWS
-// documentation, and returns the result of the operation.
-type SqsHandler func(action, reqID string, params, attributes map[string]string) (res SqsResult)
-
 var sqsAction = map[string]reflect.Value{}
 
 // InstallSQS routes on the given router
-func (i Interface) InstallSQS(router *mux.Router, handler SqsHandler) {
+func (i Interface) InstallSQS(router *mux.Router, pushC chan<- lsqs.Action) {
 
 	log.Println("Installing SQS service")
 
 	api := &SqsAPI{
-		handle: handler,
+		pushC: pushC,
 	}
 
 	lt := reflect.TypeOf(api)
@@ -101,7 +96,9 @@ func (s SqsAPI) CreateQueue(
 		return ErrMissingParamRes("QueueName is a required parameter", reqID)
 	}
 
-	res := s.handle("CreateQueue", reqID, params, attributes)
+	resC := make(chan lsqs.ReqResult)
+	s.pushC <- lsqs.CreateQueue(params, attributes, resC)
+	res := <-resC
 	switch res.Err {
 	case nil:
 	case lsqs.ErrAlreadyExists:
@@ -149,7 +146,9 @@ func (s SqsAPI) DeleteMessage(
 		return ErrMissingParamRes("ReceiptHandle is a required parameter", reqID)
 	}
 
-	res := s.handle("DeleteMessage", reqID, params, attributes)
+	resC := make(chan lsqs.ReqResult)
+	s.pushC <- lsqs.DeleteMessage(params, resC)
+	res := <-resC
 	switch res.Err {
 	case nil:
 	case lsqs.ErrNonExistentQueue:
@@ -187,7 +186,9 @@ func (s SqsAPI) DeleteQueue(
 		return ErrMissingParamRes("QueueUrl is a required parameter", reqID)
 	}
 
-	res := s.handle("DeleteQueue", reqID, params, attributes)
+	resC := make(chan lsqs.ReqResult)
+	s.pushC <- lsqs.DeleteQueue(params, resC)
+	res := <-resC
 	if res.Err != nil {
 		return ErrInternalErrorRes(res.Err.Error(), reqID)
 	}
@@ -221,7 +222,9 @@ func (s SqsAPI) GetQueueAttributes(
 		return ErrMissingParamRes("QueueUrl is a required parameter", reqID)
 	}
 
-	res := s.handle("GetQueueAttributes", reqID, params, attributes)
+	resC := make(chan lsqs.ReqResult)
+	s.pushC <- lsqs.GetQueueAttributes(params, attributes, resC)
+	res := <-resC
 	switch res.Err {
 	case nil:
 	case lsqs.ErrNonExistentQueue:
@@ -275,7 +278,9 @@ func (s SqsAPI) GetQueueUrl(
 		return ErrMissingParamRes("QueueName is a required parameter", reqID)
 	}
 
-	res := s.handle("GetQueueUrl", reqID, params, attributes)
+	resC := make(chan lsqs.ReqResult)
+	s.pushC <- lsqs.GetQueueURL(params, resC)
+	res := <-resC
 	switch res.Err {
 	case nil:
 	case lsqs.ErrNonExistentQueue:
@@ -318,7 +323,9 @@ func (s SqsAPI) ListDeadLetterSourceQueues(
 		return ErrMissingParamRes("QueueUrl is a required parameter", reqID)
 	}
 
-	res := s.handle("ListDeadLetterSourceQueues", reqID, params, attributes)
+	resC := make(chan lsqs.ReqResult)
+	s.pushC <- lsqs.ListDeadLetterSourceQueues(params, resC)
+	res := <-resC
 	switch res.Err {
 	case nil:
 	case lsqs.ErrNonExistentQueue:
@@ -356,7 +363,9 @@ func (s SqsAPI) ListQueues(
 
 	reqID := ctx.Value(ReqIDKey{}).(string)
 
-	res := s.handle("ListQueues", reqID, params, attributes)
+	resC := make(chan lsqs.ReqResult)
+	s.pushC <- lsqs.ListQueues(params, resC)
+	res := <-resC
 	if res.Err != nil {
 		return ErrInternalErrorRes(res.Err.Error(), reqID)
 	}
@@ -394,7 +403,9 @@ func (s SqsAPI) PurgeQueue(
 		return ErrMissingParamRes("QueueUrl is a required parameter", reqID)
 	}
 
-	res := s.handle("PurgeQueue", reqID, params, attributes)
+	resC := make(chan lsqs.ReqResult)
+	s.pushC <- lsqs.PurgeQueue(params, resC)
+	res := <-resC
 	switch res.Err {
 	case nil:
 	case lsqs.ErrNonExistentQueue:
@@ -432,7 +443,9 @@ func (s SqsAPI) ReceiveMessage(
 		return ErrMissingParamRes("QueueUrl is a required parameter", reqID)
 	}
 
-	res := s.handle("ReceiveMessage", reqID, params, attributes)
+	resC := make(chan lsqs.ReqResult)
+	s.pushC <- lsqs.ReceiveMessage(reqID, params, resC)
+	res := <-resC
 	switch res.Err {
 	case nil:
 	case lsqs.ErrNonExistentQueue:
@@ -503,7 +516,9 @@ func (s SqsAPI) SendMessage(
 	}
 	params["MessageBody"] = escaped
 
-	res := s.handle("SendMessage", reqID, params, attributes)
+	resC := make(chan lsqs.ReqResult)
+	s.pushC <- lsqs.SendMessage(params, resC)
+	res := <-resC
 	switch res.Err {
 	case nil:
 	case lsqs.ErrInvalidParameterValue:
@@ -551,7 +566,9 @@ func (s SqsAPI) SetQueueAttributes(
 		return ErrMissingParamRes("QueueUrl is a required parameter", reqID)
 	}
 
-	res := s.handle("SetQueueAttributes", reqID, params, attributes)
+	resC := make(chan lsqs.ReqResult)
+	s.pushC <- lsqs.SetQueueAttributes(params, attributes, resC)
+	res := <-resC
 	switch res.Err {
 	case nil:
 	case lsqs.ErrInvalidAttributeName:

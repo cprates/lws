@@ -35,7 +35,9 @@ type queue struct {
 }
 
 type longPollRequest struct {
-	originalReq         *Request
+	reqID               string
+	parameters          map[string]string
+	resC                chan<- ReqResult
 	deadline            time.Time
 	maxNumberOfMessages int
 }
@@ -111,10 +113,18 @@ func (q *queue) setDelayed(msg *Message, delaySeconds time.Duration) {
 	q.delayedMessages.Sort(deadlineCmp)
 }
 
-func (q *queue) setOnWait(originalReq *Request, uptoMessages int, waitSeconds time.Duration) {
+func (q *queue) setOnWait(
+	reqID string,
+	params map[string]string,
+	resC chan<- ReqResult,
+	uptoMessages int,
+	waitSeconds time.Duration,
+) {
 
 	req := &longPollRequest{
-		originalReq:         originalReq,
+		reqID:               reqID,
+		parameters:          params,
+		resC:                resC,
 		deadline:            time.Now().UTC().Add(waitSeconds),
 		maxNumberOfMessages: uptoMessages,
 	}
