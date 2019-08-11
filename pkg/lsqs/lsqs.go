@@ -54,7 +54,7 @@ var (
 )
 
 // FmtURL defines the format of a Queue URL
-const FmtURL = "%s://sqs.%s.queue.%s/%s/%s"
+const FmtURL = "%s://%s/%s/%s"
 
 // Start a new LSQS instance with the given configuration and returns a channel to
 // communicate with it.
@@ -307,7 +307,7 @@ func CreateQueue(
 
 	return func(l *lSqs) {
 		name := parameters["QueueName"]
-		url := fmt.Sprintf(FmtURL, l.scheme, l.region, l.host, l.accountID, name)
+		url := fmt.Sprintf(FmtURL, l.scheme, l.host, l.accountID, name)
 		lrn := fmt.Sprintf("arn:aws:sqs:%s:%s:%s", l.region, l.accountID, name)
 		ts := time.Now().Unix()
 		newQ := &queue{

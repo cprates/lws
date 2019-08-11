@@ -106,14 +106,7 @@ func sqsDispatcher(
 	// endpoint is /queue/{QueueName} or /{Account}/{QueueName}
 	if qName, ok := vars["QueueName"]; ok {
 		if _, hasURL := params["QueueUrl"]; !hasURL {
-			params["QueueUrl"] = fmt.Sprintf(
-				lsqs.FmtURL,
-				api.proto,
-				api.region,
-				api.addr,
-				api.account,
-				qName,
-			)
+			params["QueueUrl"] = fmt.Sprintf(lsqs.FmtURL, api.proto, api.addr, api.account, qName)
 		}
 
 		if qName, hasQName := params["QueueName"]; !hasQName {

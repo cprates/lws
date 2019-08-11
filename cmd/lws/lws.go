@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"path/filepath"
 	"runtime"
@@ -52,6 +53,15 @@ func main() {
 	proto := viper.GetString("service.protocol")
 	addr := viper.GetString("service.addr")
 	codePath := viper.GetString("lambda.codePath")
+
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		log.Errorln(err)
+		return
+	}
+	if host == "" {
+		log.Panic("'service.addr' must be on the form 'host:port'")
+	}
 
 	s := newServer()
 	awsAPI := aws.New(
