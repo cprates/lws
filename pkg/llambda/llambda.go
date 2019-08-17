@@ -5,12 +5,26 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"os"
-	"path"
+	"time"
 
+	"github.com/cprates/lws/pkg/box"
+	"github.com/cprates/lws/pkg/list"
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 )
+
+// Runtime contains all supported runtimes.
+var Runtime = struct {
+	Supported []string
+	imageFile map[string]string
+}{
+	Supported: []string{
+		"go1.x",
+	},
+	imageFile: map[string]string{
+		"go1.x": "golang_base.tar",
+	},
+}
 
 // LLambda is the interface to implement if you want to implement your own Lambda service.
 type LLambda interface {
@@ -22,27 +36,30 @@ type Instance struct {
 	AccountID string
 	Region    string
 	Proto     string
-	Host      string
+	Addr      string
 
-	codePath  string
 	functions map[string]*function // by function name
 	// TODO: align
+
+	// container's manager
+	boxManager *box.Manager
 }
 
 var (
-	// ErrResourceConflict maps to ResourceConflictException
-	ErrResourceConflict = errors.New("ResourceConflictException")
+	ErrFunctionAlreadyExist = errors.New("already exist")
+	// ErrFunctionNotFound is for when the given function does not exist.
+	ErrFunctionNotFound = errors.New("not found")
 )
 
-// New returns a ready to use instance of LLambda.
-func New(account, region, proto, host, codePath string) *Instance {
+// New returns a ready to use instance of LLambda, addr must be of the form host:port.
+func New(account, region, proto, addr, workdir string) (instance *Instance) {
 	return &Instance{
-		AccountID: account,
-		Region:    region,
-		Proto:     proto,
-		Host:      host,
-		codePath:  codePath,
-		functions: map[string]*function{},
+		AccountID:  account,
+		Region:     region,
+		Proto:      proto,
+		Addr:       addr,
+		functions:  map[string]*function{},
+		boxManager: box.New(workdir),
 	}
 }
 
@@ -56,6 +73,8 @@ forloop:
 			switch req.action {
 			case "CreateFunction":
 				i.createFunction(req)
+			case "InvokeFunction":
+				i.invokeFunction(req)
 			default:
 				req.resC <- &ReqResult{Err: fmt.Errorf("%q not implemented", req.action)}
 				break
@@ -74,7 +93,7 @@ func (i *Instance) createFunction(req Request) {
 
 	if _, exists := i.functions[params.FunctionName]; exists {
 		req.resC <- &ReqResult{
-			Err:     ErrResourceConflict,
+			Err:     ErrFunctionAlreadyExist,
 			ErrData: "function already exist: " + params.FunctionName,
 		}
 		return
@@ -87,7 +106,8 @@ func (i *Instance) createFunction(req Request) {
 	}
 	revID := u.String()
 
-	fName := params.FunctionName // TODO: params.FunctionName has to be parsed. it may contain the arn
+	// TODO: params.FunctionName has to be parsed. it may contain the arn. In case of an ANR, we MUST extract the name ONLY
+	fName := params.FunctionName
 	lrn := "arn:aws:lambda:" + i.Region + ":" + i.AccountID + ":function:" + fName
 
 	if src, ok := params.Code["ZipFile"]; !ok {
@@ -104,26 +124,32 @@ func (i *Instance) createFunction(req Request) {
 		return
 	}
 
-	codeFolder := path.Join(i.codePath, fName)
-	codeSize, err := storeFunctionCode(codeFolder, "code.zip", buf)
+	codeSize, err := i.boxManager.CreateBox(
+		fName,
+		Runtime.imageFile[params.Runtime],
+		params.Handler,
+		buf,
+	)
 	if err != nil {
+		log.Println(":::::::", err) // TODO: delete
 		req.resC <- &ReqResult{Err: err}
 		return
 	}
 
 	f := function{
-		codeFolder:  codeFolder,
-		description: params.Description,
-		envVars:     params.Environment.Variables,
-		handler:     params.Handler,
-		memorySize:  params.MemorySize,
-		name:        fName,
-		lrn:         lrn,
-		publish:     params.Publish,
-		revID:       revID,
-		role:        params.Role,
-		runtime:     params.Runtime,
-		version:     "$LATEST",
+		description:      params.Description,
+		envVars:          params.Environment.Variables,
+		handler:          params.Handler,
+		memorySize:       params.MemorySize,
+		name:             fName,
+		lrn:              lrn,
+		publish:          params.Publish,
+		revID:            revID,
+		role:             params.Role,
+		runtime:          params.Runtime,
+		version:          "$LATEST",
+		idleInstances:    list.New(),
+		runningInstances: list.New(),
 	}
 	// set default memory value
 	if f.memorySize == 0 {
@@ -153,26 +179,61 @@ func (i *Instance) createFunction(req Request) {
 	}
 }
 
-func storeFunctionCode(dstDir, fileName string, code []byte) (n int, err error) {
+func (i *Instance) invokeFunction(req Request) {
 
-	if _, err = os.Stat(dstDir); os.IsNotExist(err) {
-		err = os.MkdirAll(dstDir, 0766)
-		if err != nil {
-			return
+	params := req.params.(ReqInvokeFunction)
+
+	function, exist := i.functions[params.FunctionName]
+	if !exist {
+		req.resC <- &ReqResult{
+			Err:     ErrFunctionNotFound,
+			ErrData: "Function not found: " + params.FunctionName,
 		}
-	}
-
-	f, err := os.OpenFile(path.Join(dstDir, fileName), os.O_CREATE|os.O_WRONLY, 0766)
-	if err != nil {
 		return
 	}
 
-	defer func() {
-		e := f.Close()
-		if err == nil && e != nil {
-			err = e
+	// TODO
+	// for now only supports synchronous calls
+	if params.InvocationType != "" && params.InvocationType != "RequestResponse" {
+		req.resC <- &ReqResult{
+			Err: fmt.Errorf("invocation type %q not implemented", params.InvocationType),
 		}
-	}()
+		return
+	}
 
-	return f.Write(code)
+	// TODO
+	// for now does not return the output
+	if params.LogType != "" && params.LogType != "None" {
+		req.resC <- &ReqResult{Err: fmt.Errorf("logtype %q not implemented", params.LogType)}
+		return
+	}
+
+	// TODO
+	// for now don't support versions
+	if params.Qualifier != "" {
+		req.resC <- &ReqResult{Err: errors.New("versions not implemented")}
+		return
+	}
+
+	//err := i.functions[params.FunctionName].invoke(
+	//	params.Payload, params.Qualifier, params.InvocationType, params.LogType,
+	//)
+	// TODO: simulate random delay of a lambda being created/invoked?
+	time.Sleep(500 * time.Millisecond)
+
+	instanceID := "0"
+	err := i.boxManager.CreateBoxInstance(function.name, instanceID)
+	// TODO: handle errors
+	if err != nil {
+		req.resC <- &ReqResult{Err: err}
+		return
+	}
+	err = i.boxManager.Exec(function.name, instanceID)
+	// TODO: handle errors
+	if err != nil {
+		req.resC <- &ReqResult{Err: err}
+		return
+	}
+
+	req.resC <- &ReqResult{}
 }
