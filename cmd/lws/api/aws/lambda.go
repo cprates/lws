@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
@@ -17,25 +18,29 @@ import (
 type LambdaAPI struct {
 	instance llambda.LLambda
 	pushC    chan llambda.Request
-	stopC    chan struct{}
+	stopC    <-chan struct{}
 }
 
-var runtimes = []string{
-	"go1.x",
-}
-
-// InstallLambda installs Lambda service and starts a new instance of LLambda.
+// Start starts a new instance of LLambda.
 func (i Interface) InstallLambda(
 	router *mux.Router,
-	region, accountID, scheme, host, codePath string,
+	region, accountID, scheme, host, lambdaWorkdir string,
+	stopC <-chan struct{},
+	shutdown *sync.WaitGroup,
+) (
+	pushC chan llambda.Request,
+	err error,
 ) {
 
 	log.Println("Installing Lambda service")
 
-	instance := llambda.New(accountID, region, scheme, host, codePath)
-	pushC := make(chan llambda.Request)
-	stopC := make(chan struct{})
-	go instance.Process(pushC, stopC)
+	// TODO: same structure as LSQS
+	instance := llambda.New(accountID, region, scheme, host, lambdaWorkdir)
+	pushC = make(chan llambda.Request)
+	go func() {
+		instance.Process(pushC, stopC)
+		shutdown.Done()
+	}()
 
 	api := &LambdaAPI{
 		instance: instance,
@@ -48,6 +53,8 @@ func (i Interface) InstallLambda(
 		root+"/{FunctionName}/invocations",
 		invokeFunction(api),
 	).Methods(http.MethodPost)
+
+	return
 }
 
 func onLambdaErr(statusCode int, code, message string, w http.ResponseWriter) error {
@@ -80,6 +87,20 @@ func onLambdaInvalidParameterValue(message string, w http.ResponseWriter) {
 	}
 }
 
+func onLambdaAlreadyExist(message string, w http.ResponseWriter) {
+	err := onLambdaErr(http.StatusConflict, "ResourceConflictException", message, w)
+	if err != nil {
+		log.Debugln(err)
+	}
+}
+
+func onLambdaNotFound(message string, w http.ResponseWriter) {
+	err := onLambdaErr(http.StatusNotFound, "ResourceNotFoundException", message, w)
+	if err != nil {
+		log.Debugln(err)
+	}
+}
+
 // createFunction creates a Lambda function. To create a function, you need a deployment package
 // and an execution role.
 func createFunction(api *LambdaAPI) http.HandlerFunc {
@@ -90,7 +111,7 @@ func createFunction(api *LambdaAPI) http.HandlerFunc {
 		u, err := uuid.NewRandom()
 		if err != nil {
 			onLambdaInternalError(err.Error(), w)
-			log.Debugln("Unexpected error", err)
+			log.Errorln("Unexpected error", err)
 			return
 		}
 		reqID := u.String()
@@ -100,7 +121,7 @@ func createFunction(api *LambdaAPI) http.HandlerFunc {
 		body, err := ioutil.ReadAll(r.Body)
 		if err != nil {
 			onLambdaInternalError(err.Error(), w)
-			log.Debugln("Failed to read body,", reqID, err)
+			log.Errorln("Failed to read body,", reqID, err)
 			return
 		}
 
@@ -108,7 +129,7 @@ func createFunction(api *LambdaAPI) http.HandlerFunc {
 		err = json.Unmarshal(body, &params)
 		if err != nil {
 			onLambdaInternalError(err.Error(), w)
-			log.Debugln("Failed to read query params,", reqID, err)
+			log.Errorln("Failed to read query params,", reqID, err)
 			return
 		}
 
@@ -129,8 +150,10 @@ func createFunction(api *LambdaAPI) http.HandlerFunc {
 		} else if len(params.Role) == 0 {
 			onLambdaInvalidParameterValue("Role is a required parameter", w)
 			return
-		} else if !stringInSlice(params.Runtime, runtimes) {
-			onLambdaInvalidParameterValue("Runtime supported:"+strings.Join(runtimes, ","), w)
+		} else if !stringInSlice(params.Runtime, llambda.Runtime.Supported) {
+			onLambdaInvalidParameterValue(
+				"Runtime supported:"+strings.Join(llambda.Runtime.Supported, ","), w,
+			)
 			return
 		}
 
@@ -141,13 +164,8 @@ func createFunction(api *LambdaAPI) http.HandlerFunc {
 			log.Debugln(reqID, lambdaRes.Err, lambdaRes.ErrData)
 
 			switch lambdaRes.Err {
-			case llambda.ErrResourceConflict:
-				e := onLambdaErr(
-					http.StatusConflict, lambdaRes.Err.Error(), lambdaRes.ErrData.(string), w,
-				)
-				if e != nil {
-					log.Debugln(e)
-				}
+			case llambda.ErrFunctionAlreadyExist:
+				onLambdaAlreadyExist(lambdaRes.ErrData.(string), w)
 			default:
 				onLambdaInternalError(lambdaRes.Err.Error(), w)
 			}
@@ -156,7 +174,7 @@ func createFunction(api *LambdaAPI) http.HandlerFunc {
 
 		buf, err := json.Marshal(lambdaRes.Data)
 		if err != nil {
-			log.Debugln(reqID, err)
+			log.Errorln(reqID, err)
 			onLambdaInternalError(err.Error(), w)
 			return
 		}
@@ -165,13 +183,106 @@ func createFunction(api *LambdaAPI) http.HandlerFunc {
 		w.WriteHeader(201)
 		_, err = w.Write(reqRes.Result)
 		if err != nil {
-			log.Debugln("Unexpected error, request", reqID, err)
+			log.Errorln("Unexpected error, request", reqID, err)
 		}
 	}
 }
 
 func invokeFunction(api *LambdaAPI) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+
+		w.Header().Add("Content-Type", "application/json")
+
+		u, err := uuid.NewRandom()
+		if err != nil {
+			onLambdaInternalError(err.Error(), w)
+			log.Debugln("Unexpected error", err)
+			return
+		}
+		reqID := u.String()
+
+		log.Debugf("Req %s %q, %s", r.Method, r.RequestURI, reqID)
+
+		payload, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			onLambdaInternalError(err.Error(), w)
+			log.Debugln("Failed to read body,", reqID, err)
+			return
+		}
+
+		functionName, exists := mux.Vars(r)["FunctionName"]
+		if !exists {
+			// TODO: needs a better check
+			onLambdaInvalidParameterValue("FunctionName is a required parameter", w)
+			return
+		}
+
+		headers, _ := flattAndParse(r.Header)
+		query, _ := flattAndParse(r.URL.Query())
+
+		qualifier, present := query["Qualifier"]
+		// TODO: need better check, pattern: (|[a-zA-Z0-9$_-]+)
+		if present && (len(qualifier) < 1 || len(qualifier) > 128) {
+			onLambdaInvalidParameterValue("Qualifier must be between 1 and 128 characters", w)
+			return
+		}
+
+		invocationType, present := headers["X-Amz-Invocation-Type"]
+		invocationTypes := []string{"Event", "RequestResponse", "DryRun"}
+		if present && !stringInSlice(invocationType, invocationTypes) {
+			onLambdaInvalidParameterValue(
+				"InvocationType mut be "+strings.Join(invocationTypes, " | "),
+				w,
+			)
+			return
+		}
+
+		logType, present := headers["X-Amz-Log-Type"]
+		logTypes := []string{"None", "Tail"}
+		if present && !stringInSlice(logType, logTypes) {
+			onLambdaInvalidParameterValue(
+				"InvocationType mut be "+strings.Join(logTypes, " | "),
+				w,
+			)
+			return
+		}
+
+		params := llambda.ReqInvokeFunction{
+			FunctionName:   functionName,
+			Qualifier:      qualifier,
+			InvocationType: invocationType,
+			LogType:        logType,
+			Payload:        payload,
+		}
+
+		log.Debugf("Invoking function %q, %s", params.FunctionName, reqID)
+
+		lambdaRes := llambda.PushReq(api.pushC, "InvokeFunction", reqID, params)
+		if lambdaRes.Err != nil {
+			log.Errorln(reqID, lambdaRes.Err, lambdaRes.ErrData)
+
+			switch lambdaRes.Err {
+			case llambda.ErrFunctionNotFound:
+				onLambdaNotFound(lambdaRes.ErrData.(string), w)
+			default:
+				onLambdaInternalError(lambdaRes.Err.Error(), w)
+			}
+			return
+		}
+
+		buf, err := json.Marshal(lambdaRes.Data)
+		if err != nil {
+			log.Errorln(reqID, err)
+			onLambdaInternalError(err.Error(), w)
+			return
+		}
+
+		reqRes := SuccessRes(buf, reqID)
+		w.WriteHeader(201)
+		_, err = w.Write(reqRes.Result)
+		if err != nil {
+			log.Errorln("Unexpected error, request", reqID, err)
+		}
 
 	}
 }

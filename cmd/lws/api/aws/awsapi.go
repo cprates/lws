@@ -10,21 +10,19 @@ import (
 
 // Interface represents an AWS API compatible interface.
 type Interface struct {
-	region   string
-	account  string
-	proto    string
-	addr     string
-	codePath string
+	region  string
+	account string
+	proto   string
+	addr    string
 }
 
 // New AWS API compatible interface to serve HTTP requests.
-func New(region, account, proto, addr, codePath string) Interface {
+func New(region, account, proto, addr string) Interface {
 	return Interface{
-		region:   region,
-		account:  account,
-		proto:    proto,
-		addr:     addr,
-		codePath: codePath,
+		region:  region,
+		account: account,
+		proto:   proto,
+		addr:    addr,
 	}
 }
 

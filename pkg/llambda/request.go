@@ -36,6 +36,15 @@ type ReqCreateFunction struct {
 	Runtime      string
 }
 
+// ReqInvokeFunction is for invoke a function.
+type ReqInvokeFunction struct {
+	FunctionName   string
+	Qualifier      string
+	InvocationType string
+	LogType        string
+	Payload        []byte
+}
+
 // NewReq returns a new Request to interact with the LLambda Processor.
 func NewReq(action, reqID string, params interface{}) Request {
 	return Request{

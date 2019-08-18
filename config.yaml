@@ -1,10 +1,11 @@
-debug: false
+debug: true
 
 service:
   protocol: "http"
-  addr: "localhost:8080"
+  addr: "172.18.0.2:8080"
   region: "us-est-2"
   accountId: "0000000000"
 
 lambda:
-  codePath: "function_code"
+  # if changed, for now the makefile and Docker files must be updated as well
+  workfolder: "repo"

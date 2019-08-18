@@ -45,10 +45,20 @@ type Instance struct {
 	boxManager *box.Manager
 }
 
+// Args sent to the lambda application. Must be synchronized with the
+// struct in the agent.
+type LambdaArgs struct {
+	FunctionName string
+	RequestId    string
+	Body         []byte
+	Arn          string
+}
+
 var (
 	ErrFunctionAlreadyExist = errors.New("already exist")
 	// ErrFunctionNotFound is for when the given function does not exist.
-	ErrFunctionNotFound = errors.New("not found")
+	ErrFunctionNotFound      = errors.New("not found")
+	ErrMaxConcurrencyReached = errors.New("max concurrency reached")
 )
 
 // New returns a ready to use instance of LLambda, addr must be of the form host:port.
@@ -137,19 +147,18 @@ func (i *Instance) createFunction(req Request) {
 	}
 
 	f := function{
-		description:      params.Description,
-		envVars:          params.Environment.Variables,
-		handler:          params.Handler,
-		memorySize:       params.MemorySize,
-		name:             fName,
-		lrn:              lrn,
-		publish:          params.Publish,
-		revID:            revID,
-		role:             params.Role,
-		runtime:          params.Runtime,
-		version:          "$LATEST",
-		idleInstances:    list.New(),
-		runningInstances: list.New(),
+		description:   params.Description,
+		envVars:       params.Environment.Variables,
+		handler:       params.Handler,
+		memorySize:    params.MemorySize,
+		name:          fName,
+		lrn:           lrn,
+		publish:       params.Publish,
+		revID:         revID,
+		role:          params.Role,
+		runtime:       params.Runtime,
+		version:       "$LATEST",
+		idleInstances: list.New(),
 	}
 	// set default memory value
 	if f.memorySize == 0 {
@@ -221,14 +230,43 @@ func (i *Instance) invokeFunction(req Request) {
 	// TODO: simulate random delay of a lambda being created/invoked?
 	time.Sleep(500 * time.Millisecond)
 
-	instanceID := "0"
-	err := i.boxManager.CreateBoxInstance(function.name, instanceID)
-	// TODO: handle errors
-	if err != nil {
-		req.resC <- &ReqResult{Err: err}
-		return
+	instanceID := "0" // TODO: generate this... short uuid?
+	var inst *instance
+	// if no idle instances available, create a new one if didn't reach the limit
+	switch elem := function.idleInstances.PullFront(); elem {
+	case nil:
+		log.Debugln("No instances available, creating....")
+		// TODO: when it supports configuring max concurrency on a function, this must be
+		//  aware of it
+
+		err := i.boxManager.CreateBoxInstance(function.name, instanceID)
+		if err != nil {
+			req.resC <- &ReqResult{Err: err}
+			return
+		}
+
+		inst = &instance{id: instanceID}
+	default:
+		inst = elem.(*instance)
 	}
-	err = i.boxManager.Exec(function.name, instanceID)
+
+	defer func() {
+		// put instance back to the idle stack
+		function.idleInstances.PushFront(inst)
+	}()
+
+	log.Debugln("Launching instance", inst.id)
+
+	err := i.boxManager.Exec(
+		function.name,
+		inst.id,
+		&LambdaArgs{
+			FunctionName: function.name,
+			RequestId:    req.id,
+			Body:         params.Payload,
+			Arn:          function.lrn,
+		},
+	)
 	// TODO: handle errors
 	if err != nil {
 		req.resC <- &ReqResult{Err: err}

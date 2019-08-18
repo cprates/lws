@@ -1,0 +1,19 @@
+FROM golang:1.12.7-buster as builder
+
+WORKDIR /lws
+COPY . .
+RUN go mod download \
+    && go get -u golang.org/x/lint/golint \
+    && CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo ./cmd/lws \
+    && CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo ./cmd/runbox
+
+FROM alpine:3.10
+RUN apk --no-cache add ca-certificates
+WORKDIR /lws
+COPY --from=builder /lws/lws .
+COPY --from=builder /lws/config.yaml .
+COPY --from=builder /lws/runbox /bin
+COPY repo/*_base.tar /lws/repo/
+
+CMD ["/lws/lws"]
+EXPOSE 8080

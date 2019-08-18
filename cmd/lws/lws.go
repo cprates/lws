@@ -1,31 +1,63 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"net/http"
+	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"sync"
+	"syscall"
+	"time"
 
 	log "github.com/sirupsen/logrus"
-	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 
 	"github.com/cprates/lws/cmd/lws/api/aws"
 	"github.com/cprates/lws/pkg/lsqs"
 )
 
+type Config struct {
+	Debug   bool
+	Service struct {
+		Protocol  string
+		Addr      string
+		Region    string
+		AccountId string
+	}
+	Lambda struct {
+		Workfolder string
+	}
+}
+
+var Conf Config
+
 func init() {
 
-	viper.SetConfigName("config")
-	viper.AddConfigPath(".")
-	err := viper.ReadInConfig()
+	f, err := os.Open("./config.yaml")
 	if err != nil {
-		panic(fmt.Errorf("fatal error config file: %s", err))
+		panic(fmt.Errorf("fatal error opening config file: %s", err))
+	}
+	defer f.Close()
+
+	confBuf, err := ioutil.ReadAll(f)
+	if err != nil {
+		panic(fmt.Errorf("fatal error reading config file: %s", err))
+	}
+
+	Conf = Config{}
+	err = yaml.Unmarshal(confBuf, &Conf)
+	if err != nil {
+		panic(fmt.Errorf("fatal error loading config: %s", err))
 	}
 
 	log.StandardLogger().SetNoLock()
-	if viper.GetBool("debug") {
+	if Conf.Debug {
 		log.SetLevel(log.DebugLevel)
 	} else {
 		log.SetLevel(log.InfoLevel)
@@ -48,11 +80,11 @@ func main() {
 
 	log.Println("Starting LWS...")
 
-	region := viper.GetString("service.region")
-	account := viper.GetString("service.accountId")
-	proto := viper.GetString("service.protocol")
-	addr := viper.GetString("service.addr")
-	codePath := viper.GetString("lambda.codePath")
+	region := Conf.Service.Region
+	account := Conf.Service.AccountId
+	proto := Conf.Service.Protocol
+	addr := Conf.Service.Addr
+	lambdaFolder := Conf.Lambda.Workfolder
 
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -64,20 +96,61 @@ func main() {
 	}
 
 	s := newServer()
+	cwd, err := os.Getwd()
+	if err != nil {
+		log.Panic(err)
+	}
+	lambdaWorkdir := filepath.Join(cwd, lambdaFolder)
 	awsAPI := aws.New(
 		region,
 		account,
 		proto,
 		addr,
-		codePath,
 	)
 
+	wg := sync.WaitGroup{}
 	stopC := make(chan struct{})
-	pushC := lsqs.Start(account, region, proto, addr, stopC)
+	wg.Add(1)
+	_, err = awsAPI.InstallLambda(s.router, region, account, proto, addr, lambdaWorkdir, stopC, &wg)
+	if err != nil {
+		log.Errorln(err)
+		return
+	}
+
+	wg.Add(1)
+	pushC := lsqs.Start(account, region, proto, addr, stopC, &wg)
 	awsAPI.InstallSQS(s.router, pushC)
 
-	awsAPI.InstallLambda(s.router, region, account, proto, addr, codePath)
+	httpSrv := &http.Server{Addr: addr, Handler: s.router}
+
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigs
+		fmt.Println()
+		log.Println("Shutting down...")
+		e := httpSrv.Shutdown(context.Background())
+		if e != nil {
+			log.Errorln(err)
+		}
+		close(stopC)
+	}()
 
 	log.Println("Listening on", addr)
-	log.Fatal(http.ListenAndServe(addr, s.router))
+	err = httpSrv.ListenAndServe()
+	if err != nil && err != http.ErrServerClosed {
+		log.Fatalln(err)
+	}
+
+	shutTimeout := make(chan struct{}, 1)
+	go func() {
+		wg.Wait()
+		shutTimeout <- struct{}{}
+	}()
+
+	select {
+	case <-shutTimeout:
+	case <-time.After(1 * time.Second):
+		log.Errorln("some services din't shutdown in time")
+	}
 }

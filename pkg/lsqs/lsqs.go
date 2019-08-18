@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -58,7 +59,11 @@ const FmtURL = "%s://%s/%s/%s"
 
 // Start a new LSQS instance with the given configuration and returns a channel to
 // communicate with it.
-func Start(accountID, region, scheme, host string, stopC <-chan struct{}) chan<- Action {
+func Start(
+	accountID, region, scheme, host string,
+	stopC <-chan struct{},
+	shutdown *sync.WaitGroup,
+) chan<- Action {
 
 	pushC := make(chan Action)
 	instance := &lSqs{
@@ -69,7 +74,10 @@ func Start(accountID, region, scheme, host string, stopC <-chan struct{}) chan<-
 		queues:    map[string]*queue{},
 	}
 
-	go instance.Process(pushC, stopC)
+	go func() {
+		instance.Process(pushC, stopC)
+		shutdown.Done()
+	}()
 
 	return pushC
 }
