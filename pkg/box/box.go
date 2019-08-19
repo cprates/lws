@@ -3,12 +3,10 @@ package box
 import (
 	"errors"
 	"fmt"
-	"net/rpc"
 	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
-	"strconv"
 	"time"
 )
 
@@ -30,12 +28,11 @@ type boxtype struct {
 	instances  map[string]*boxInstance
 	// every box instance will be running on this host, and the manager will try to connect
 	// to it every time it needs to execute an operation on an box instance
-	agentHost string
+	agentHost string // TODO: make sure this is needed
 }
 
 type boxInstance struct {
-	port int // port the agent will be listening to
-	id   string
+	id string
 }
 
 type errBox struct {
@@ -124,7 +121,7 @@ func (m *Manager) CreateBox(name, imageFile, entryPoint string, code []byte) (n 
 }
 
 // TODO: update doc
-func (m *Manager) CreateBoxInstance(boxName, instanceId string) (err error) {
+func (m *Manager) LaunchBoxInstance(boxName, instanceId string, args ...string) (err error) {
 
 	box, exist := m.boxes[boxName]
 	if !exist {
@@ -139,8 +136,7 @@ func (m *Manager) CreateBoxInstance(boxName, instanceId string) (err error) {
 	}
 
 	instance = &boxInstance{
-		port: 50123, // TODO: sequential ports on a ring buffer
-		id:   instanceId,
+		id: instanceId,
 	}
 
 	dstFolder := filepath.Join(m.Workdir, boxName, instanceId)
@@ -184,14 +180,7 @@ func (m *Manager) CreateBoxInstance(boxName, instanceId string) (err error) {
 	// launch box instance
 	cmd := exec.Command(
 		"runbox",
-		"boxing",
-		box.agentHost,
-		dstFolder,
-		"/bin/gobox",
-		// gobox arguments
-		strconv.Itoa(instance.port),
-		filepath.Join("/", "app", box.entryPoint),
-		box.name,
+		append([]string{"boxing", box.agentHost, dstFolder, box.entryPoint}, args...)...,
 	)
 	// TODO: this should be 'redrived' to the logger I'm using
 	cmd.Stdin = os.Stdin
@@ -216,53 +205,6 @@ func (m *Manager) CreateBoxInstance(boxName, instanceId string) (err error) {
 	//  receive those acks.
 	//  For now, just sleep...
 	time.Sleep(100 * time.Millisecond)
-
-	return
-}
-
-func (m *Manager) Exec(boxName, instanceId string, arg interface{}) (err error) {
-
-	box, exist := m.boxes[boxName]
-	if !exist {
-		err = errors.New("box does not exist")
-		return
-	}
-
-	instance, exist := box.instances[instanceId]
-	if !exist {
-		err = errors.New("box instance does not exist")
-		return
-	}
-
-	// TODO: log debug on the given logger
-	fmt.Printf(
-		"Connecting to %s[%s] at %s:%d...\n",
-		box.name, instance.id, box.agentHost, instance.port,
-	)
-	// instead of keeping a connection alive, connect to the box every time we need
-	boxAddr := box.agentHost + ":" + strconv.Itoa(instance.port)
-	c, err := rpc.Dial("tcp", boxAddr)
-	if err != nil {
-		err = fmt.Errorf("dial to box at %q failed: %s", boxAddr, err)
-		return
-	}
-	defer func() {
-		e := c.Close()
-		if err == nil {
-			err = e
-		}
-	}()
-
-	// TODO: log debug on the given logger
-	fmt.Printf("Executing agent on box %s[%s]\n", box.name, instance.id)
-	res := ""
-	err = c.Call("Server.Exec", arg, &res)
-	if err != nil {
-		err = fmt.Errorf("call to box failed: %s", err)
-		return
-	}
-
-	fmt.Println("Response:", res) // TODO: delete
 
 	return
 }

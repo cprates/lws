@@ -109,6 +109,14 @@ func runLambda() {
 		return
 	}
 
+	// setup env vars
+	for i := 4; len(os.Args) > i+1; i += 2 {
+		e := os.Setenv(os.Args[i], os.Args[i+1])
+		if e != nil {
+			fmt.Println("error setting user env vars:", e)
+		}
+	}
+
 	// initialise our lambda. At this stage it will only be waiting for us to send the request
 	execErrC := make(chan error, 1)
 
@@ -123,7 +131,8 @@ func runLambda() {
 	}()
 }
 
-// Usage: ./gobox port entrypoint boxName
+// Usage: ./gobox port entrypoint boxName <env vars>...
+//        Env vars are passed in the form: EnvName1 EnvVal1 EnvVar2 EnvVal2
 func main() {
 
 	addr := ":" + os.Args[1]

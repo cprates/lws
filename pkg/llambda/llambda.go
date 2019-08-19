@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/cprates/lws/pkg/box"
@@ -15,14 +17,18 @@ import (
 
 // Runtime contains all supported runtimes.
 var Runtime = struct {
-	Supported []string
-	imageFile map[string]string
+	Supported  []string
+	imageFile  map[string]string
+	entrypoint map[string]string
 }{
 	Supported: []string{
 		"go1.x",
 	},
 	imageFile: map[string]string{
 		"go1.x": "golang_base.tar",
+	},
+	entrypoint: map[string]string{
+		"go1.x": "/bin/gobox",
 	},
 }
 
@@ -137,7 +143,7 @@ func (i *Instance) createFunction(req Request) {
 	codeSize, err := i.boxManager.CreateBox(
 		fName,
 		Runtime.imageFile[params.Runtime],
-		params.Handler,
+		Runtime.entrypoint[params.Runtime],
 		buf,
 	)
 	if err != nil {
@@ -231,6 +237,7 @@ func (i *Instance) invokeFunction(req Request) {
 	time.Sleep(500 * time.Millisecond)
 
 	instanceID := "0" // TODO: generate this... short uuid?
+	port := 50123     // TODO: sequential ports on a ring buffer
 	var inst *instance
 	// if no idle instances available, create a new one if didn't reach the limit
 	switch elem := function.idleInstances.PullFront(); elem {
@@ -239,13 +246,32 @@ func (i *Instance) invokeFunction(req Request) {
 		// TODO: when it supports configuring max concurrency on a function, this must be
 		//  aware of it
 
-		err := i.boxManager.CreateBoxInstance(function.name, instanceID)
+		args := []string{
+			strconv.Itoa(port),
+			filepath.Join("/", "app", function.handler),
+			function.name,
+		}
+		// add env vars
+		for k, v := range function.envVars {
+			args = append(args, []string{k, v}...) // TODO: improve this to avoid creating a temporary array
+		}
+
+		err := i.boxManager.LaunchBoxInstance(
+			function.name,
+			instanceID,
+			// box arguments
+			args...,
+		)
 		if err != nil {
 			req.resC <- &ReqResult{Err: err}
 			return
 		}
 
-		inst = &instance{id: instanceID}
+		inst = &instance{
+			parent: function,
+			id:     instanceID,
+			port:   port,
+		}
 	default:
 		inst = elem.(*instance)
 	}
@@ -257,9 +283,7 @@ func (i *Instance) invokeFunction(req Request) {
 
 	log.Debugln("Launching instance", inst.id)
 
-	err := i.boxManager.Exec(
-		function.name,
-		inst.id,
+	err := inst.Exec(
 		&LambdaArgs{
 			FunctionName: function.name,
 			RequestId:    req.id,
