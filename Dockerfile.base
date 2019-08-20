@@ -1,0 +1,8 @@
+FROM golang:1.12.7-buster
+
+WORKDIR /lws
+
+COPY . .
+
+RUN go mod download \
+    && go get -u golang.org/x/lint/golint

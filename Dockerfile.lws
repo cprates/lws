@@ -1,10 +1,7 @@
-FROM golang:1.12.7-buster as builder
+FROM cprates/lws_base:latest as builder
 
 WORKDIR /lws
-COPY . .
-RUN go mod download \
-    && go get -u golang.org/x/lint/golint \
-    && CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo ./cmd/lws \
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo ./cmd/lws \
     && CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo ./cmd/runbox
 
 FROM alpine:3.10
