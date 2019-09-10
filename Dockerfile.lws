@@ -1,16 +1,24 @@
 FROM cprates/lws_base:latest as builder
 
 WORKDIR /lws
+
+COPY . .
+
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo ./cmd/lws \
     && CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo ./cmd/runbox
 
+
 FROM alpine:3.10
+
+ARG LWS_LAMBDA_WORKDIR
+ARG LWS_PORT
+
 RUN apk --no-cache add ca-certificates
+
 WORKDIR /lws
 COPY --from=builder /lws/lws .
-COPY --from=builder /lws/config.yaml .
 COPY --from=builder /lws/runbox /bin
-COPY repo/*_base.tar /lws/repo/
+COPY ${LWS_LAMBDA_WORKDIR}/*_base.tar /lws/${LWS_LAMBDA_WORKDIR}/
 
 CMD ["/lws/lws"]
-EXPOSE 8080
+EXPOSE ${LWS_PORT}

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"os"
@@ -16,48 +15,15 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
-	"gopkg.in/yaml.v3"
 
 	"github.com/cprates/lws/cmd/lws/api/aws"
 	"github.com/cprates/lws/pkg/lsqs"
 )
 
-type Config struct {
-	Debug   bool
-	Service struct {
-		Protocol  string
-		Addr      string
-		Region    string
-		AccountId string
-	}
-	Lambda struct {
-		Workfolder string
-	}
-}
-
-var Conf Config
-
 func init() {
 
-	f, err := os.Open("./config.yaml")
-	if err != nil {
-		panic(fmt.Errorf("fatal error opening config file: %s", err))
-	}
-	defer f.Close()
-
-	confBuf, err := ioutil.ReadAll(f)
-	if err != nil {
-		panic(fmt.Errorf("fatal error reading config file: %s", err))
-	}
-
-	Conf = Config{}
-	err = yaml.Unmarshal(confBuf, &Conf)
-	if err != nil {
-		panic(fmt.Errorf("fatal error loading config: %s", err))
-	}
-
 	log.StandardLogger().SetNoLock()
-	if Conf.Debug {
+	if os.Getenv("LWS_DEBUG") == "1" {
 		log.SetLevel(log.DebugLevel)
 	} else {
 		log.SetLevel(log.InfoLevel)
@@ -80,11 +46,11 @@ func main() {
 
 	log.Println("Starting LWS...")
 
-	region := Conf.Service.Region
-	account := Conf.Service.AccountId
-	proto := Conf.Service.Protocol
-	addr := Conf.Service.Addr
-	lambdaFolder := Conf.Lambda.Workfolder
+	region := os.Getenv("LWS_DEBUG")
+	account := os.Getenv("LWS_ACCOUNT_ID")
+	proto := os.Getenv("LWS_PROTO")
+	addr := net.JoinHostPort(os.Getenv("LWS_HOST"), os.Getenv("LWS_PORT"))
+	lambdaFolder := os.Getenv("LWS_LAMBDA_WORKDIR")
 
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {

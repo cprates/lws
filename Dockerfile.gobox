@@ -1,6 +1,9 @@
 FROM cprates/lws_base:latest as builder
 
 WORKDIR /lws
+
+COPY . .
+
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo ./cmd/gobox
 
 
