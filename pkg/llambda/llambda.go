@@ -15,7 +15,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// Runtime contains all supported runtimes.
+// Runtime contains all supported runtimes along with some configs.
 var Runtime = struct {
 	Supported  []string
 	imageFile  map[string]string
@@ -283,7 +283,7 @@ func (i *Instance) invokeFunction(req Request) {
 
 	log.Debugln("Launching instance", inst.id)
 
-	err := inst.Exec(
+	reply, err := inst.Exec(
 		&LambdaArgs{
 			FunctionName: function.name,
 			RequestId:    req.id,
@@ -297,5 +297,10 @@ func (i *Instance) invokeFunction(req Request) {
 		return
 	}
 
-	req.resC <- &ReqResult{}
+	req.resC <- &ReqResult{
+		Data: map[string]string{
+			"result":  string(reply.Payload),
+			"version": function.version,
+		},
+	}
 }

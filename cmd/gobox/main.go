@@ -19,7 +19,7 @@ type Server struct {
 	listener net.Listener
 }
 
-func (s *Server) Exec(args *llambda.LambdaArgs, reply *string) (err error) {
+func (s *Server) Exec(args *llambda.LambdaArgs, reply *messages.InvokeResponse) (err error) {
 	// TODO: this is being shared with the host a it shouldn't
 	//fmt.Println(os.Environ())
 	fmt.Println("Agent PID:", os.Getpid())
@@ -58,25 +58,23 @@ func (s *Server) Exec(args *llambda.LambdaArgs, reply *string) (err error) {
 		// TODO: check lambdacontext.LambdaContext and its exported vars set based on env vars
 		// ClientContext: []byte("sdfsdfsdsgdfg"),
 	}
-	res := messages.InvokeResponse{}
 
-	err = c.Call("Function.Invoke", &req, &res)
+	err = c.Call("Function.Invoke", &req, reply)
 	if err != nil {
 		fmt.Println("Err2:", err)
-		fmt.Println("Err2:", res)
+		fmt.Println("Err2:", reply)
 		return
 	}
-	fmt.Println("res:", string(res.Payload))
-	if res.Error != nil {
+	fmt.Println("res:::", string(reply.Payload))
+	if reply.Error != nil {
 		// ShouldExit is set at Function.Invoke when the function panics, but don't know what it does...
 		//   May be this has something to do with the InvokeOutput.Function error Handled and UnHandled.
 		//   invoke a function that panics and check the results. Could be used to shutdown the lambda
 		//    container because it panic
 		// StackTrace is for panics as well
-		fmt.Printf("res: %+v\n", *res.Error)
+		fmt.Printf("res: %+v\n", *reply.Error)
 	}
 
-	*reply = string(res.Payload)
 	return
 }
 

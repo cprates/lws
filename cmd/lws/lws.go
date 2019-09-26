@@ -46,7 +46,7 @@ func main() {
 
 	log.Println("Starting LWS...")
 
-	region := os.Getenv("LWS_DEBUG")
+	region := os.Getenv("AWS_DEFAULT_REGION")
 	account := os.Getenv("LWS_ACCOUNT_ID")
 	proto := os.Getenv("LWS_PROTO")
 	addr := net.JoinHostPort(os.Getenv("LWS_HOST"), os.Getenv("LWS_PORT"))

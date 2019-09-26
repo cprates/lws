@@ -180,7 +180,11 @@ func (m *Manager) LaunchBoxInstance(boxName, instanceId string, args ...string) 
 	// launch box instance
 	cmd := exec.Command(
 		"runbox",
-		append([]string{"boxing", box.agentHost, dstFolder, box.entryPoint}, args...)...,
+		append(
+			[]string{
+				"boxing", os.Getenv("GATEWAY"), box.agentHost, dstFolder, box.entryPoint,
+			}, args...,
+		)...,
 	)
 	// TODO: this should be 'redrived' to the logger I'm using
 	cmd.Stdin = os.Stdin

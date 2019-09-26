@@ -5,3 +5,6 @@
 
 echo "127.0.0.1    localhost" > /etc/hosts
 echo "::1          localhost" >> /etc/hosts
+
+# set DNS server
+echo "nameserver $GATEWAY" > /etc/resolv.conf

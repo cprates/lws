@@ -15,14 +15,14 @@ func main() {
 		run()
 	default:
 		panic(`Usage:
-  ./runbox boxing hostname /path/to/fs /path/to/entrypoint <...args>
+  ./runbox boxing ip_gateway hostname /path/to/fs /path/to/entrypoint <...args>
 `,
 		)
 	}
 }
 
 func boxing() {
-	cmd := exec.Command("/proc/self/exe", append([]string{"run"}, os.Args[2:]...)...)
+	cmd := exec.Command("/proc/self/exe", append([]string{"run"}, os.Args[3:]...)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -30,6 +30,7 @@ func boxing() {
 		Cloneflags:   syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS,
 		Unshareflags: syscall.CLONE_NEWNS,
 	}
+	cmd.Env = []string{"GATEWAY=" + os.Args[2]}
 
 	must(cmd.Run())
 }

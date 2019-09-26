@@ -179,9 +179,8 @@ func createFunction(api *LambdaAPI) http.HandlerFunc {
 			return
 		}
 
-		reqRes := SuccessRes(buf, reqID)
 		w.WriteHeader(201)
-		_, err = w.Write(reqRes.Result)
+		_, err = w.Write(buf)
 		if err != nil {
 			log.Errorln("Unexpected error, request", reqID, err)
 		}
@@ -270,19 +269,19 @@ func invokeFunction(api *LambdaAPI) http.HandlerFunc {
 			return
 		}
 
-		buf, err := json.Marshal(lambdaRes.Data)
-		if err != nil {
-			log.Errorln(reqID, err)
-			onLambdaInternalError(err.Error(), w)
-			return
+		res := lambdaRes.Data.(map[string]string)
+
+		//w.Header().Set("X-Amz-Function-Error", "Unhandled")
+		if logType == "Tail" { // TODO: and no error...
+			//w.Header().Set("X-Amz-Log-Result", string(buf)) // TODO: only the result
 		}
 
-		reqRes := SuccessRes(buf, reqID)
-		w.WriteHeader(201)
-		_, err = w.Write(reqRes.Result)
+		w.Header().Set("X-Amz-Executed-Version", res["version"])
+		w.WriteHeader(200)
+
+		_, err = w.Write([]byte(res["result"]))
 		if err != nil {
 			log.Errorln("Unexpected error, request", reqID, err)
 		}
-
 	}
 }

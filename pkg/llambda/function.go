@@ -5,8 +5,10 @@ import (
 	"net/rpc"
 	"strconv"
 
-	"github.com/cprates/lws/pkg/list"
+	"github.com/aws/aws-lambda-go/lambda/messages" // TODO: instead of adding the dependency, replicate the struct?
 	log "github.com/sirupsen/logrus"
+
+	"github.com/cprates/lws/pkg/list"
 )
 
 type function struct {
@@ -30,7 +32,7 @@ type instance struct {
 	port   int
 }
 
-func (i *instance) Exec(arg interface{}) (err error) {
+func (i *instance) Exec(arg interface{}) (reply *messages.InvokeResponse, err error) {
 
 	// TODO: log debug on the given logger
 	log.Printf(
@@ -53,14 +55,12 @@ func (i *instance) Exec(arg interface{}) (err error) {
 
 	// TODO: log debug on the given logger
 	log.Printf("Executing agent on box %s[%s]\n", i.parent.name, i.id)
-	res := ""
-	err = c.Call("Server.Exec", arg, &res)
+	reply = &messages.InvokeResponse{}
+	err = c.Call("Server.Exec", arg, reply)
 	if err != nil {
 		err = fmt.Errorf("call to box failed: %s", err)
 		return
 	}
-
-	log.Println("Response:", res) // TODO: delete
 
 	return
 }

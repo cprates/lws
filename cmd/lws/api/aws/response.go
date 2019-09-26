@@ -119,6 +119,7 @@ func ErrInvalidParameterValueRes(msg, reqID string) Response {
 }
 
 // SuccessRes is for make our life easier when generating a success result.
+// TODO: used by SQS only... Move to somewhere sqs specific
 func SuccessRes(res []byte, reqID string) Response {
 	return Response{
 		Status: 200,

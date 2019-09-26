@@ -11,6 +11,7 @@ export LWS_LAMBDA_WORKDIR ?= repo
 # infrastructure configs
 LWS_DOCKER_SUBNET ?= 172.18.0.0/16
 LWS_DOCKER_IP ?= 172.18.0.2
+LWS_DOCKER_GW ?= 192.168.0.1
 
 
 init:
@@ -68,6 +69,7 @@ run:
 		--env LWS_HOST=$(LWS_HOST) \
 		--env LWS_PORT=$(LWS_PORT) \
 		--env LWS_LAMBDA_WORKDIR=$(LWS_LAMBDA_WORKDIR) \
+		--env GATEWAY=$(LWS_DOCKER_GW) \
 		-p $(LWS_PORT):$(LWS_PORT) \
 		--add-host lws:127.0.0.1 \
 		--net lwsnetwork \
