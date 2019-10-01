@@ -239,6 +239,7 @@ func (i *Instance) invokeFunction(req Request) {
 	instanceID := "0" // TODO: generate this... short uuid?
 	port := 50123     // TODO: sequential ports on a ring buffer
 	var inst *instance
+	var errC chan error
 	// if no idle instances available, create a new one if didn't reach the limit
 	switch elem := function.idleInstances.PullFront(); elem {
 	case nil:
@@ -256,7 +257,8 @@ func (i *Instance) invokeFunction(req Request) {
 			args = append(args, []string{k, v}...) // TODO: improve this to avoid creating a temporary array
 		}
 
-		err := i.boxManager.LaunchBoxInstance(
+		var err error
+		errC, err = i.boxManager.LaunchBoxInstance(
 			function.name,
 			instanceID,
 			// box arguments
@@ -293,6 +295,10 @@ func (i *Instance) invokeFunction(req Request) {
 	)
 	// TODO: handle errors
 	if err != nil {
+		// if errC has an error, the lambda instance didn't launch properly, hence, override err
+		if e := <-errC; e != nil {
+			err = e
+		}
 		req.resC <- &ReqResult{Err: err}
 		return
 	}

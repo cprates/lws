@@ -17,8 +17,6 @@ type Manager struct {
 	// directory where boxes are going to be created
 	Workdir string
 	boxes   map[string]*boxtype
-	// errors of box's execution (not the target's error) are sent to this channel
-	errors chan errBox
 }
 
 type boxtype struct {
@@ -53,7 +51,6 @@ func New(workdir string) *Manager {
 	m := &Manager{
 		Workdir: workdir,
 		boxes:   map[string]*boxtype{},
-		errors:  make(chan errBox),
 	}
 
 	return m
@@ -114,14 +111,23 @@ func (m *Manager) CreateBox(name, imageFile, entryPoint string, code []byte) (n 
 		image:      imageFile,
 		entryPoint: entryPoint,
 		instances:  map[string]*boxInstance{},
-		agentHost:  "lws", // to keep it simple at this stage, lets use a static host
+		agentHost:  name,
 	}
 
 	return
 }
 
-// TODO: update doc
-func (m *Manager) LaunchBoxInstance(boxName, instanceId string, args ...string) (err error) {
+// LaunchBoxInstance launches a new instance of a previously created boxName with the given
+// intanceId, passing args to the box entry point. The instanceId and boxName together must
+// not exceed 12
+func (m *Manager) LaunchBoxInstance(
+	boxName,
+	instanceId string,
+	args ...string,
+) (
+	errC chan error,
+	err error,
+) {
 
 	box, exist := m.boxes[boxName]
 	if !exist {
@@ -179,28 +185,27 @@ func (m *Manager) LaunchBoxInstance(boxName, instanceId string, args ...string) 
 
 	// launch box instance
 	cmd := exec.Command(
-		"runbox",
+		"exec.sh",
 		append(
-			[]string{
-				"boxing", os.Getenv("GATEWAY"), box.agentHost, dstFolder, box.entryPoint,
-			}, args...,
+			[]string{box.entryPoint}, args...,
 		)...,
 	)
+	cmd.Env = []string{
+		"LAMBDA_NS=" + box.agentHost,
+		"HOSTNAME=" + box.agentHost + "." + instance.id,
+		"LOCAL_IP=" + "172.18.0.6/30", // TODO
+		"NEXT_HOP=" + "172.18.0.5/30", // TODO
+		"FS_PATH=" + dstFolder,
+		"DEBUG=" + os.Getenv("LWS_DEBUG"),
+	}
 	// TODO: this should be 'redrived' to the logger I'm using
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
+	errC = make(chan error, 1)
 	go func() {
-		// TODO: if this throws an error, currently I have now way to know it. Try add a panic int
-		//  the main of invoke cmd
-		e := cmd.Run()
-		fmt.Println("ERR FROM INVOKE:", e) // TODO: delete
-		m.errors <- errBox{
-			boxName:    box.name,
-			instanceId: instance.id,
-			err:        e,
-		}
+		errC <- cmd.Run()
 	}()
 
 	// TODO: will take a few milliseconds before the service is available, and the cmd.Run only

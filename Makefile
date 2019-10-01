@@ -3,15 +3,15 @@
 export LWS_DEBUG ?= 1
 export LWS_ACCOUNT_ID ?= 0000000000
 export LWS_PROTO ?= http
-export LWS_HOST ?= 172.18.0.2
-export LWS_PORT ?= 8080
 # if changed, for now the makefile and Docker files must be updated as well
 export LWS_LAMBDA_WORKDIR ?= repo
 
-# infrastructure configs
-LWS_DOCKER_SUBNET ?= 172.18.0.0/16
-LWS_DOCKER_IP ?= 172.18.0.2
-LWS_DOCKER_GW ?= 192.168.0.1
+# network
+export LWS_IP ?= 172.18.0.2
+export LWS_PORT ?= 8080
+LWS_DOCKER_SUBNET ?= 172.18.0.0/30
+LWS_NETWORK_BITS ?= 30
+LWS_DOCKER_GW ?= 172.18.0.1
 
 
 init:
@@ -66,11 +66,11 @@ run:
 		--env LWS_DEBUG=$(LWS_DEBUG) \
 		--env LWS_ACCOUNT_ID=$(LWS_ACCOUNT_ID) \
 		--env LWS_PROTO=$(LWS_PROTO) \
-		--env LWS_HOST=$(LWS_HOST) \
-		--env LWS_PORT=$(LWS_PORT) \
 		--env LWS_LAMBDA_WORKDIR=$(LWS_LAMBDA_WORKDIR) \
-		--env GATEWAY=$(LWS_DOCKER_GW) \
+		--env LWS_IP=$(LWS_IP) \
+		--env LWS_PORT=$(LWS_PORT) \
+		--env LWS_NETWORK_BITS=$(LWS_NETWORK_BITS) \
+		--env LWS_DOCKER_GW=$(LWS_DOCKER_GW) \
 		-p $(LWS_PORT):$(LWS_PORT) \
-		--add-host lws:127.0.0.1 \
 		--net lwsnetwork \
-		--ip $(LWS_DOCKER_IP) cprates/lws:latest
+		cprates/lws:latest

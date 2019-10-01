@@ -30,7 +30,6 @@ RUN set -x \
 WORKDIR /
 
 COPY --from=builder /lws/gobox /bin
-COPY cmd/runbox/init.sh .
 
 RUN mkdir /app \
     && apk del wget \

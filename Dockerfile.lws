@@ -4,8 +4,7 @@ WORKDIR /lws
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo ./cmd/lws \
-    && CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo ./cmd/runbox
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo ./cmd/lws
 
 
 FROM alpine:3.10
@@ -13,12 +12,14 @@ FROM alpine:3.10
 ARG LWS_LAMBDA_WORKDIR
 ARG LWS_PORT
 
-RUN apk --no-cache add ca-certificates
+# iproute2 is for ip command with namespaces support
+RUN apk --no-cache add ca-certificates iproute2
 
 WORKDIR /lws
 COPY --from=builder /lws/lws .
-COPY --from=builder /lws/runbox /bin
+COPY cmd/runbox/exec.sh cmd/runbox/stage2.sh /bin/
 COPY ${LWS_LAMBDA_WORKDIR}/*_base.tar /lws/${LWS_LAMBDA_WORKDIR}/
+COPY ./scripts/boot.sh .
 
-CMD ["/lws/lws"]
+CMD ["./boot.sh"]
 EXPOSE ${LWS_PORT}

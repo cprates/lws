@@ -2,8 +2,10 @@ package llambda
 
 import (
 	"fmt"
+	"net"
 	"net/rpc"
 	"strconv"
+	"time"
 
 	"github.com/aws/aws-lambda-go/lambda/messages" // TODO: instead of adding the dependency, replicate the struct?
 	log "github.com/sirupsen/logrus"
@@ -40,12 +42,15 @@ func (i *instance) Exec(arg interface{}) (reply *messages.InvokeResponse, err er
 		i.parent.name, i.id, "lws", i.port, // TODO: "lws" was box.agentHost before
 	)
 	// instead of keeping a connection alive, connect to the box every time we need
-	boxAddr := "lws" + ":" + strconv.Itoa(i.port) // TODO: "lws" was box.agentHost before
-	c, err := rpc.Dial("tcp", boxAddr)
+	boxAddr := "172.18.0.6:" + strconv.Itoa(i.port) // TODO: "172.18.0.6" was box.agentHost before
+	conn, err := net.DialTimeout("tcp", boxAddr, 2*time.Second)
 	if err != nil {
 		err = fmt.Errorf("dial to box at %q failed: %s", boxAddr, err)
+		fmt.Println(err) // TODO: delete
 		return
 	}
+	c := rpc.NewClient(conn)
+
 	defer func() {
 		e := c.Close()
 		if err == nil {

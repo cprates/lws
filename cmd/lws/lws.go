@@ -49,7 +49,7 @@ func main() {
 	region := os.Getenv("AWS_DEFAULT_REGION")
 	account := os.Getenv("LWS_ACCOUNT_ID")
 	proto := os.Getenv("LWS_PROTO")
-	addr := net.JoinHostPort(os.Getenv("LWS_HOST"), os.Getenv("LWS_PORT"))
+	addr := net.JoinHostPort(os.Getenv("LWS_IP"), os.Getenv("LWS_PORT"))
 	lambdaFolder := os.Getenv("LWS_LAMBDA_WORKDIR")
 
 	host, _, err := net.SplitHostPort(addr)
