@@ -3,12 +3,16 @@
 set -e
 test "$DEBUG" -eq 1 && set -x
 
+cleanup() {
+    umount $FS_PATH/proc || true
+    umount $FS_PATH/tmp || true
+}
+
 hostname $HOSTNAME
 
 mount -t proc proc $FS_PATH/proc
-trap "umount $FS_PATH/proc" EXIT
+trap cleanup EXIT
 mount -t tmpfs tmpfs $FS_PATH/tmp
-trap "umount $FS_PATH/tmp" EXIT
 
 # create device nodes
 mount -n -t tmpfs none $FS_PATH/dev
@@ -39,6 +43,10 @@ ip link set $IF_BOX name eth0 up
 ip addr add $LOCAL_IP dev eth0
 
 ip route add default via $(echo $NEXT_HOP | cut -d/ -f1)
+# Because reuse of IPs may happen very frequently we need to announce to remote machines
+# that they need to update their APR tables, by sending Gratuitous ARP responses.
+# It may take a while so, leave it running in background to avoid delaying the lambda bootup
+arping -c 2 -w 1 -I eth0 -s $(echo $LOCAL_IP | cut -d/ -f1) 255.255.255.255 > /dev/null &
 
 
 chroot $FS_PATH $@

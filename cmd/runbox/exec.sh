@@ -8,8 +8,15 @@ IF_HOST=h_$PID
 export IF_BOX=b_$PID
 : ${IF_BRIDGE:=br0}
 
+
+cleanup() {
+    ip netns del $LAMBDA_NS || true
+    ip addr del $NEXT_HOP dev $IF_BRIDGE || true
+}
+
+
 ip netns add $LAMBDA_NS
-trap "ip netns del $LAMBDA_NS" EXIT
+trap cleanup EXIT
 
 ip link add name $IF_HOST type veth peer name $IF_BOX
 ip link set $IF_BOX netns $LAMBDA_NS
@@ -17,7 +24,7 @@ ip link set $IF_BOX netns $LAMBDA_NS
 # hosts file
 echo "127.0.0.1    localhost" > $FS_PATH/etc/hosts
 echo "::1          localhost" >> $FS_PATH/etc/hosts
-echo "$LOCAL_IP    $HOSTNAME" >> $FS_PATH/etc/hosts
+echo "$(echo $LOCAL_IP | cut -d/ -f1)    $HOSTNAME" >> $FS_PATH/etc/hosts
 
 # DNS server
 echo "nameserver 8.8.8.8" > $FS_PATH/etc/resolv.conf
