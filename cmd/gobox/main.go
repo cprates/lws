@@ -6,10 +6,10 @@ import (
 	"net/rpc"
 	"os"
 	"os/exec"
+	"sync"
 
 	"github.com/aws/aws-lambda-go/lambda/messages"
 
-	"github.com/cprates/lws/pkg/box"
 	"github.com/cprates/lws/pkg/llambda"
 )
 
@@ -78,22 +78,16 @@ func (s *Server) Exec(args *llambda.LambdaArgs, reply *messages.InvokeResponse) 
 	return
 }
 
-func (s *Server) Ping(args *box.BoxArg, reply *string) (err error) {
-	*reply = "Pong!"
-	return
-}
-
-func (s *Server) Shutdown(args *box.BoxArg, reply *string) (err error) {
-	fmt.Println("Shutting down...")
-	//err = s.listener.Close()
+func (s *Server) Shutdown(arg string, reply *string) (err error) {
+	fmt.Println("Shutting down gobox...")
+	err = s.listener.Close()
 	if err != nil {
 		// TODO: right way to log? or should be to stderr directly?
 		fmt.Println(err)
 		return
 	}
 
-	*reply = "Shutting down..."
-
+	*reply = "OK"
 	return
 }
 
@@ -143,22 +137,39 @@ func main() {
 		return
 	}
 	defer func() {
-		err := l.Close()
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
+		// ignore error
+		_ = l.Close()
 	}()
 
-	err = rpc.Register(&Server{listener: l})
+	rpcSrv := rpc.NewServer()
+	err = rpcSrv.Register(&Server{listener: l})
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println("Failed to register rpc service:", err)
 		return
 	}
 
 	runLambda()
-	rpc.Accept(l)
 
-	fmt.Println()
-	fmt.Printf("terminating gobox %q running at %s", os.Args[3], os.Args[1])
+	wg := sync.WaitGroup{}
+	for {
+		conn, err := l.Accept()
+		if err != nil {
+			fmt.Println("gobox: accept:", err)
+			break
+		}
+		wg.Add(1)
+		go func() {
+			rpcSrv.ServeConn(conn)
+			wg.Done()
+		}()
+	}
+
+	fmt.Printf(
+		"Waiting for request being served before terminating gobox %q at %s\n",
+		os.Args[3], os.Args[1],
+	)
+
+	wg.Wait()
+
+	fmt.Printf("Terminating gobox %q running at %s\n", os.Args[3], os.Args[1])
 }
