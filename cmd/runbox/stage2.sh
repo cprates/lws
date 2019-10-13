@@ -45,7 +45,9 @@ ip addr add $LOCAL_IP dev eth0
 ip route add default via $(echo $NEXT_HOP | cut -d/ -f1)
 # Because reuse of IPs may happen very frequently we need to announce to remote machines
 # that they need to update their APR tables, by sending Gratuitous ARP responses.
-# It may take a while so, leave it running in background to avoid delaying the lambda bootup
+# It may take a while so, leave it running in background to avoid delaying the lambda bootup.
+# Plus, this is something related to llambda, if we want to use this on a more generic way,
+# may be it should has an extra flag to execute this.
 arping -c 2 -w 1 -I eth0 -s $(echo $LOCAL_IP | cut -d/ -f1) 255.255.255.255 > /dev/null &
 
 

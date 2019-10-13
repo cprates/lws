@@ -22,11 +22,14 @@ ip link add name $IF_HOST type veth peer name $IF_BOX
 ip link set $IF_BOX netns $LAMBDA_NS
 
 # hosts file
+# This will override existing data and leave it there after exiting the container. Perhaps
+# it should create a temporary one and mount it instead?
 echo "127.0.0.1    localhost" > $FS_PATH/etc/hosts
 echo "::1          localhost" >> $FS_PATH/etc/hosts
 echo "$(echo $LOCAL_IP | cut -d/ -f1)    $HOSTNAME" >> $FS_PATH/etc/hosts
 
 # DNS server
+# this has the same issue pointed for hosts
 echo "nameserver 8.8.8.8" > $FS_PATH/etc/resolv.conf
 
 ip link set $IF_HOST up
