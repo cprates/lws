@@ -1,4 +1,4 @@
-#runbox
+# runbox
 
 Is a very simple set of bash scripts to help setting up a linux container.
 It is used by *llambda* as an utility to run lambdas on an isolated environment from the host.  
@@ -24,7 +24,7 @@ Optional environment variables:
 - *DEBUG*: when set to *1*, prints to stdout all executed commands and their outputs when any
 
 
-##Examples
+## Examples
 
 ```
 sudo LAMBDA_NS=runbox \
