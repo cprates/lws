@@ -37,4 +37,4 @@ ip link set $IF_HOST master $IF_BRIDGE
 ip addr add $NEXT_HOP dev $IF_BRIDGE
 
 
-ip netns exec $LAMBDA_NS unshare -iumpf /bin/stage2.sh $@
+ip netns exec $LAMBDA_NS unshare -iumpf $WORK_DIR/stage2.sh $@

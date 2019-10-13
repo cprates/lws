@@ -7,11 +7,16 @@ export LWS_PROTO ?= http
 export LWS_LAMBDA_WORKDIR ?= repo
 
 # network
-export LWS_IP ?= 172.18.0.2
+LWS_IP ?= 172.18.0.2
 export LWS_PORT ?= 8080
 LWS_DOCKER_SUBNET ?= 172.18.0.0/30
 LWS_NETWORK_BITS ?= 30
 LWS_DOCKER_GW ?= 172.18.0.1
+
+# boot
+LWS_IF_BRIDGE=br0
+LWS_IF_HOST=eth0
+LWS_WORK_DIR=/lws
 
 
 init:
@@ -71,6 +76,9 @@ run:
 		--env LWS_PORT=$(LWS_PORT) \
 		--env LWS_NETWORK_BITS=$(LWS_NETWORK_BITS) \
 		--env LWS_DOCKER_GW=$(LWS_DOCKER_GW) \
+		--env LWS_IF_BRIDGE=$(LWS_IF_BRIDGE) \
+		--env LWS_IF_HOST=$(LWS_IF_HOST) \
+		--env LWS_WORK_DIR=$(LWS_WORK_DIR) \
 		-p $(LWS_PORT):$(LWS_PORT) \
 		--net lwsnetwork \
 		cprates/lws:latest
