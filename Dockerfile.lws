@@ -17,9 +17,8 @@ RUN apk --no-cache add ca-certificates iproute2
 
 WORKDIR /lws
 COPY --from=builder /lws/lws .
-COPY cmd/runbox/exec.sh cmd/runbox/stage2.sh /bin/
+COPY ./cmd/runbox/runbox.sh ./cmd/runbox/stage2.sh ./scripts/boot.sh ./
 COPY ${LWS_LAMBDA_WORKDIR}/*_base.tar /lws/${LWS_LAMBDA_WORKDIR}/
-COPY ./scripts/boot.sh .
 
 CMD ["./boot.sh"]
 EXPOSE ${LWS_PORT}
