@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -70,17 +71,24 @@ var (
 // New returns a ready to use instance of LLambda, addr must be of the form host:port.
 func New(account, region, proto, addr, workdir string) (instance *Instance) {
 	return &Instance{
-		AccountID:  account,
-		Region:     region,
-		Proto:      proto,
-		Addr:       addr,
-		functions:  map[string]*function{},
-		boxManager: box.New(workdir),
+		AccountID: account,
+		Region:    region,
+		Proto:     proto,
+		Addr:      addr,
+		functions: map[string]*function{},
+		// TODO: instead of passing os.Stderr pass it the given logger (after I've get rid of the logrus...)
+		boxManager: box.New(workdir, os.Stderr),
 	}
 }
 
 // Process requests from the API.
 func (i *Instance) Process(reqC <-chan Request, stopC <-chan struct{}) {
+
+	go func() {
+		i.boxManager.Start(stopC)
+	}()
+
+	lifecycleTick := time.NewTicker(time.Second)
 
 forloop:
 	for {
@@ -95,12 +103,56 @@ forloop:
 				req.resC <- &ReqResult{Err: fmt.Errorf("%q not implemented", req.action)}
 				break
 			}
+		case <-lifecycleTick.C:
+			// TODO: because handleLifecycle is doing operations that may take a while like
+			//  inst.Shutdown(), this can be a problem because while this function is executing
+			//  the service can not serve requests from clients...
+			//  To avoid this, this function could be running on its own in a separate goroutine
+			//  and if we do that, the access to function.idleInstances MUST be thread safe
+			i.handleLifecycle()
 		case <-stopC:
 			break forloop
 		}
 	}
 
 	log.Println("Shutting down LLambda...")
+	lifecycleTick.Stop()
+}
+
+func (i *Instance) handleLifecycle() {
+	for _, function := range i.functions {
+		var toRemove []*list.Element
+		// safe to access function.idleInstances because only one action is processed at a time
+		for elem := function.idleInstances.Front(); elem != nil; elem = elem.Next() {
+			inst := elem.Value.(*instance)
+			if time.Now().Before(inst.lifeDeadline) {
+				continue
+			}
+
+			log.Debugf(
+				"Destroying instance %q, lambda %q, after being idle for %d seconds",
+				inst.id, function.name, function.timeout,
+			)
+
+			err := inst.Shutdown()
+			if err != nil {
+				log.Errorf(
+					"Failed to shutdown lambda %q, instance %q: %s",
+					function.name, inst.id, err,
+				)
+			}
+
+			err = i.boxManager.DestroyBox(function.name, inst.id)
+			if err != nil {
+				log.Errorln("Failed to destroy box", function.name, inst.id, err)
+			}
+			toRemove = append(toRemove, elem)
+		}
+
+		for _, elem := range toRemove {
+			function.idleInstances.Remove(elem)
+		}
+	}
 }
 
 func (i *Instance) createFunction(req Request) {
@@ -147,7 +199,6 @@ func (i *Instance) createFunction(req Request) {
 		buf,
 	)
 	if err != nil {
-		log.Println(":::::::", err) // TODO: delete
 		req.resC <- &ReqResult{Err: err}
 		return
 	}
@@ -163,12 +214,9 @@ func (i *Instance) createFunction(req Request) {
 		revID:         revID,
 		role:          params.Role,
 		runtime:       params.Runtime,
+		timeout:       params.Timeout,
 		version:       "$LATEST",
 		idleInstances: list.New(),
-	}
-	// set default memory value
-	if f.memorySize == 0 {
-		f.memorySize = 128
 	}
 
 	i.functions[f.name] = &f
@@ -189,6 +237,7 @@ func (i *Instance) createFunction(req Request) {
 			"RevisionId":   f.revID,
 			"Role":         f.role,
 			"Runtime":      f.runtime,
+			"Timeout":      f.timeout,
 			"Version":      f.version,
 		},
 	}
@@ -234,12 +283,12 @@ func (i *Instance) invokeFunction(req Request) {
 	//	params.Payload, params.Qualifier, params.InvocationType, params.LogType,
 	//)
 	// TODO: simulate random delay of a lambda being created/invoked?
-	time.Sleep(500 * time.Millisecond)
+	//time.Sleep(500 * time.Millisecond)
 
 	instanceID := "0" // TODO: generate this... short uuid?
-	port := 50123     // TODO: sequential ports on a ring buffer
+	port := 50127
+	portStr := strconv.Itoa(port) // TODO: sequential ports on a ring buffer
 	var inst *instance
-	var errC chan error
 	// if no idle instances available, create a new one if didn't reach the limit
 	switch elem := function.idleInstances.PullFront(); elem {
 	case nil:
@@ -248,7 +297,7 @@ func (i *Instance) invokeFunction(req Request) {
 		//  aware of it
 
 		args := []string{
-			strconv.Itoa(port),
+			portStr,
 			filepath.Join("/", "app", function.handler),
 			function.name,
 		}
@@ -258,9 +307,12 @@ func (i *Instance) invokeFunction(req Request) {
 		}
 
 		var err error
-		errC, err = i.boxManager.LaunchBoxInstance(
+		err = i.boxManager.LaunchBoxInstance(
 			function.name,
 			instanceID,
+			"172.18.0.6/30", // TODO
+			portStr,
+			"172.18.0.5/30", // TODO
 			// box arguments
 			args...,
 		)
@@ -270,9 +322,11 @@ func (i *Instance) invokeFunction(req Request) {
 		}
 
 		inst = &instance{
-			parent: function,
-			id:     instanceID,
-			port:   port,
+			parent:       function,
+			id:           instanceID,
+			port:         portStr,
+			ip:           "172.18.0.6", // TODO
+			lifeDeadline: time.Now().Add(time.Duration(function.timeout) * time.Second),
 		}
 	default:
 		inst = elem.(*instance)
@@ -295,10 +349,6 @@ func (i *Instance) invokeFunction(req Request) {
 	)
 	// TODO: handle errors
 	if err != nil {
-		// if errC has an error, the lambda instance didn't launch properly, hence, override err
-		if e := <-errC; e != nil {
-			err = e
-		}
 		req.resC <- &ReqResult{Err: err}
 		return
 	}

@@ -3,63 +3,90 @@ package box
 import (
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
-// name of the file containing the code to run in a box
+// name of the file containing the code to run in a box instance
 const codeFileName = "code.zip"
 
 type Manager struct {
 	// directory where boxes are going to be created
 	Workdir string
 	boxes   map[string]*boxtype
+	logger  *logrus.Logger
 }
 
 type boxtype struct {
-	name       string
-	image      string // path/file_name
-	entryPoint string
-	instances  map[string]*boxInstance
-	// every box instance will be running on this host, and the manager will try to connect
-	// to it every time it needs to execute an operation on an box instance
-	agentHost string // TODO: make sure this is needed
+	name          string
+	image         string // path/file_name
+	entryPoint    string
+	instances     map[string]*boxInstance
+	agentHostname string // is also used as namespace name
 }
 
 type boxInstance struct {
-	id string
-}
-
-type errBox struct {
-	boxName    string
-	instanceId string
-	err        error
-}
-
-type BoxArg struct {
-	Arg interface{}
+	id   string
+	ip   string
+	port string
 }
 
 // New creates an empty box Manager ready to use that will store and create new boxes under
 // workdir which is advisable to be a full path.
-func New(workdir string) *Manager {
-	// TODO: clean up folders in 'repo' at startup. May be do the same when shutting down,
-	//  listening to an OS signal
+func New(workdir string, logOutput io.Writer) *Manager {
+
+	logger := logrus.New()
+	logger.SetLevel(logrus.DebugLevel)
+	logger.SetOutput(logOutput)
+
 	m := &Manager{
 		Workdir: workdir,
 		boxes:   map[string]*boxtype{},
+		logger:  logger,
 	}
 
 	return m
 }
 
+// Start the internal mechanisms to handle errors.
+func (m *Manager) Start(stopC <-chan struct{}) {
+
+	running := true
+	for running {
+		select {
+		case <-stopC:
+			running = false
+			m.cleanup()
+		}
+	}
+
+	m.logger.Println("Shutting down Box Manager...")
+}
+
+func (m *Manager) cleanup() {
+	for _, box := range m.boxes {
+		for _, inst := range box.instances {
+			err := m.DestroyBox(box.name, inst.id)
+			if err != nil {
+				m.logger.Errorf("Failed to destroy box %s:%s: %s", box.name, inst.id, err)
+			}
+		}
+	}
+
+}
+
 // CreateBox creates a new box by first creating folder 'name' and stores the code in it with
 // as codeFileName, then makes a copy of the base image for the given runtime and finally
 // adds the file with the code to it at the root of the root.
-// TODO: doc target
+// name is also used as hostname and namespace name in which the box instance will be running.
+// TODO: make it thread safe
 func (m *Manager) CreateBox(name, imageFile, entryPoint string, code []byte) (n int, err error) {
 
 	_, exist := m.boxes[name]
@@ -77,13 +104,15 @@ func (m *Manager) CreateBox(name, imageFile, entryPoint string, code []byte) (n 
 		}
 	}
 
-	// TODO: rollback if some of these fail. Ex: if copying the base image fails,
-	//  path.Join(dstDir, fileName) must be deleted. Ex:
-	// defer func() {
-	//     if err != nil {
-	//	       delete dir
-	//      }
-	// }
+	// makes sure we delete all the garbage if something fails
+	defer func() {
+		if err != nil {
+			e := os.RemoveAll(boxDir)
+			if e != nil {
+				m.logger.Errorf("Failed to undo box creation: %s", e)
+			}
+		}
+	}()
 
 	// stores the code to be executed on this box under codeFileName file
 	codePath := path.Join(boxDir, codeFileName)
@@ -107,29 +136,64 @@ func (m *Manager) CreateBox(name, imageFile, entryPoint string, code []byte) (n 
 
 	// create the new box with no instances
 	m.boxes[name] = &boxtype{
-		name:       name,
-		image:      imageFile,
-		entryPoint: entryPoint,
-		instances:  map[string]*boxInstance{},
-		agentHost:  name,
+		name:          name,
+		image:         imageFile,
+		entryPoint:    entryPoint,
+		instances:     map[string]*boxInstance{},
+		agentHostname: name,
+	}
+
+	return
+}
+
+// TODO: make it theread safe
+func (m *Manager) DestroyBox(name, instanceId string) (err error) {
+
+	box, exist := m.boxes[name]
+	if !exist {
+		err = errors.New("box does not exist")
+		return
+	}
+
+	_, exist = box.instances[instanceId]
+	if !exist {
+		err = errors.New("box instance does not exist")
+		return
+	}
+
+	delete(box.instances, instanceId)
+
+	folder := filepath.Join(m.Workdir, name, instanceId)
+	rmCmd := exec.Command(
+		"rm",
+		"-rf", folder,
+	)
+	err = rmCmd.Run()
+	if err != nil {
+		// if failed to delete the folder, it may be an instance that had a failed
+		// initialisation and there is no folder to delete so, just log the error
+		m.logger.Errorf("while removing instance folder %q: %s", folder, err)
+		err = nil
 	}
 
 	return
 }
 
 // LaunchBoxInstance launches a new instance of a previously created boxName with the given
-// intanceId, passing args to the box entry point. The instanceId and boxName together must
-// not exceed 12
+// intanceId, passing args to the box entry point.
+//
+// ip is a CIDR notation ip that will be configured on the box's network interface.
+// nextHop is basically the default gateway to be used by this box instance.
+//
+// TODO: make it theread safe
 func (m *Manager) LaunchBoxInstance(
-	boxName,
-	instanceId string,
+	name, instanceId, ip, port, nextHop string,
 	args ...string,
 ) (
-	errC chan error,
 	err error,
 ) {
 
-	box, exist := m.boxes[boxName]
+	box, exist := m.boxes[name]
 	if !exist {
 		err = errors.New("box does not exist")
 		return
@@ -142,10 +206,12 @@ func (m *Manager) LaunchBoxInstance(
 	}
 
 	instance = &boxInstance{
-		id: instanceId,
+		id:   instanceId,
+		ip:   ip,
+		port: port,
 	}
 
-	dstFolder := filepath.Join(m.Workdir, boxName, instanceId)
+	dstFolder := filepath.Join(m.Workdir, name, instanceId)
 	if _, e := os.Stat(dstFolder); !os.IsNotExist(e) {
 		// for some reason this folder already exists and it shouldn't
 		err = fmt.Errorf("folder %q already exist", dstFolder)
@@ -158,7 +224,8 @@ func (m *Manager) LaunchBoxInstance(
 		return
 	}
 
-	// TODO: --same-owner is added by default when running as root but, lets make it explicit. On a container runs as root
+	// TODO: --same-owner is added by default when running as root but, lets make it explicit.
+	//  On a container this runs as root
 	baseImageFile := filepath.Join(m.Workdir, box.image)
 	extractCmd := exec.Command(
 		"tar",
@@ -185,35 +252,96 @@ func (m *Manager) LaunchBoxInstance(
 
 	// launch box instance
 	cmd := exec.Command(
-		"exec.sh",
+		"runbox.sh",
 		append(
 			[]string{box.entryPoint}, args...,
 		)...,
 	)
 	cmd.Env = []string{
-		"LAMBDA_NS=" + box.agentHost,
-		"HOSTNAME=" + box.agentHost + "." + instance.id,
-		"LOCAL_IP=" + "172.18.0.6/30", // TODO
-		"NEXT_HOP=" + "172.18.0.5/30", // TODO
+		"LAMBDA_NS=" + box.agentHostname,
+		"HOSTNAME=" + box.agentHostname + "." + instance.id,
+		"LOCAL_IP=" + instance.ip,
+		"NEXT_HOP=" + nextHop,
 		"FS_PATH=" + dstFolder,
+		"WORK_DIR=" + os.Getenv("LWS_WORK_DIR"),
 		"DEBUG=" + os.Getenv("LWS_DEBUG"),
 	}
-	// TODO: this should be 'redrived' to the logger I'm using
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
 
-	errC = make(chan error, 1)
+	// signal will be inspecting the output from the executed process looking for a specific
+	// string that signals the rpc server is ready.
+	signal := &signal{
+		source: m.logger.Out,
+		c:      make(chan struct{}, 1),
+	}
+
+	cmd.Stdout = signal
+	cmd.Stderr = signal
+
+	err = cmd.Start()
+	if err != nil {
+		err = fmt.Errorf("while starting box instance: %s", err)
+		return
+	}
+
 	go func() {
-		errC <- cmd.Run()
+		e := cmd.Wait()
+		if e != nil {
+			m.logger.Debugf("Box %q, instance %q exited with %q", name, instanceId, e)
+		}
 	}()
 
-	// TODO: will take a few milliseconds before the service is available, and the cmd.Run only
-	//  returns when the box is shutdown. Ideally the box should ping us back after
-	//  starting accepting connections. Probably a good approach would be run an RPC server to
-	//  receive those acks.
-	//  For now, just sleep...
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-time.After(100 * time.Millisecond):
+		m.logger.Debugf("Didn't got the ready signal from Box %q, instance %q", name, instanceId)
+	case <-signal.c:
+	}
+
+	//instance.waitReady()
 
 	return
+}
+
+// waitReady checks if the box rpc server is ready to accept connections by trying to connect
+// and retrying on dial errors up to 4 times.
+// TODO: this is probably to delete. For some reason this does not work very well when an instance
+//  reuses a previously used IP at least one minute ago (which seems to match the arp cache timeout)
+//  , it keeps timing out for about 1 second (with more retries configured) before it succeeds.
+//  It doesn't seem to make much sense because instead if I add a sleep of just 100ms, the call to
+//  instance.Exec at llambda.go succeeds and it does the exact same net.Dial... so at this point
+//  I'm not sure why it doesn't correctly.
+//  Any way the approach using the stdout/stderr is working very well, the only downside is the
+//  existing contract between box system and the runtime (gobox) that has to know the signal message
+//  and when to send it.
+func (ins *boxInstance) waitReady() bool {
+
+	parsedIP, _, err := net.ParseCIDR(ins.ip)
+	if err != nil {
+		fmt.Printf("Failed parsing the given ip %s: %s", ins.ip, err)
+		return false
+	}
+
+	for i := 0; i < 40; i++ {
+		conn, err := net.DialTimeout(
+			"tcp", net.JoinHostPort(parsedIP.String(), ins.port), 50*time.Millisecond,
+		)
+
+		if err != nil {
+			e, ok := err.(*net.OpError)
+
+			if ok && e.Op == "dial" {
+				fmt.Printf("Failed to check box status, attempt %d: %s\n", i+1, e)
+				// try again after a small delay
+				time.Sleep(5 * time.Millisecond)
+				continue
+			}
+			fmt.Println("Failed checking box status:", err)
+			return false
+		}
+
+		_ = conn.Close()
+		return true
+	}
+
+	fmt.Println("Box seems to not be responding")
+	return false
 }

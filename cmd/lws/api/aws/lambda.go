@@ -144,7 +144,10 @@ func createFunction(api *LambdaAPI) http.HandlerFunc {
 			// TODO: needs a better check
 			onLambdaInvalidParameterValue("FunctionName is a required parameter", w)
 			return
-		} else if len(params.Description) > 128 {
+		} else if params.MemorySize != 0 && (params.MemorySize < 128 || params.Timeout > 3072) {
+			onLambdaInvalidParameterValue("Memory size must be >= 128MB and <= 3072MB", w)
+			return
+		} else if len(params.Handler) > 128 {
 			onLambdaInvalidParameterValue("Handler has a maximum length of 128", w)
 			return
 		} else if len(params.Role) == 0 {
@@ -155,6 +158,17 @@ func createFunction(api *LambdaAPI) http.HandlerFunc {
 				"Runtime supported:"+strings.Join(llambda.Runtime.Supported, ","), w,
 			)
 			return
+		} else if params.Timeout < 0 && params.Timeout <= 900 {
+			onLambdaInvalidParameterValue("Timeout must be >= 1 and <= 900", w)
+			return
+		}
+
+		// handle defaults
+		if params.Timeout == 0 {
+			params.Timeout = 3
+		}
+		if params.MemorySize == 0 {
+			params.MemorySize = 128
 		}
 
 		log.Debugf("Creating function %q, %s", params.FunctionName, reqID)

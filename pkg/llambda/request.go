@@ -34,6 +34,7 @@ type ReqCreateFunction struct {
 	Publish      bool
 	Role         string
 	Runtime      string
+	Timeout      int
 }
 
 // ReqInvokeFunction is for invoke a function.

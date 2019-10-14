@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 	"net/rpc"
-	"strconv"
 	"time"
 
 	"github.com/aws/aws-lambda-go/lambda/messages" // TODO: instead of adding the dependency, replicate the struct?
@@ -24,29 +23,29 @@ type function struct {
 	revID         string
 	role          string
 	runtime       string
+	timeout       int // seconds
 	version       string
 	idleInstances *list.List
 }
 
 type instance struct {
-	parent *function
-	id     string
-	port   int
+	parent       *function
+	id           string
+	ip           string
+	port         string
+	lifeDeadline time.Time
 }
 
 func (i *instance) Exec(arg interface{}) (reply *messages.InvokeResponse, err error) {
 
-	// TODO: log debug on the given logger
-	log.Printf(
-		"Connecting to %s[%s] at %s:%d...\n",
-		i.parent.name, i.id, "lws", i.port, // TODO: "lws" was box.agentHost before
-	)
+	instanceAddr := net.JoinHostPort(i.ip, i.port)
+
+	log.Printf("Connecting to %s[%s] at %s...\n", i.parent.name, i.id, instanceAddr)
+
 	// instead of keeping a connection alive, connect to the box every time we need
-	boxAddr := "172.18.0.6:" + strconv.Itoa(i.port) // TODO: "172.18.0.6" was box.agentHost before
-	conn, err := net.DialTimeout("tcp", boxAddr, 2*time.Second)
+	conn, err := net.DialTimeout("tcp", instanceAddr, 5*time.Millisecond)
 	if err != nil {
-		err = fmt.Errorf("dial to box at %q failed: %s", boxAddr, err)
-		fmt.Println(err) // TODO: delete
+		err = fmt.Errorf("dial to box at %q failed: %s", instanceAddr, err)
 		return
 	}
 	c := rpc.NewClient(conn)
@@ -58,12 +57,42 @@ func (i *instance) Exec(arg interface{}) (reply *messages.InvokeResponse, err er
 		}
 	}()
 
-	// TODO: log debug on the given logger
+	// update deadline
+	i.lifeDeadline = time.Now().Add(time.Duration(i.parent.timeout) * time.Second)
+
 	log.Printf("Executing agent on box %s[%s]\n", i.parent.name, i.id)
 	reply = &messages.InvokeResponse{}
 	err = c.Call("Server.Exec", arg, reply)
 	if err != nil {
 		err = fmt.Errorf("call to box failed: %s", err)
+		return
+	}
+
+	return
+}
+
+// Shutdown is for shutdown a lambda's instance by calling Shutdown method on the remote
+// instance using the RPC protocol.
+func (i *instance) Shutdown() (err error) {
+
+	instanceAddr := net.JoinHostPort(i.ip, i.port)
+	conn, err := net.DialTimeout("tcp", instanceAddr, 5*time.Millisecond)
+	if err != nil {
+		err = fmt.Errorf("dial to %q: %s", instanceAddr, err)
+		return
+	}
+	c := rpc.NewClient(conn)
+
+	defer func() {
+		e := c.Close()
+		if err == nil {
+			err = e
+		}
+	}()
+
+	err = c.Call("Server.Shutdown", "", nil)
+	if err != nil {
+		err = fmt.Errorf("rpc call: %s", err)
 		return
 	}
 
