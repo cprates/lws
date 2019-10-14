@@ -7,20 +7,27 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-lambda-go/lambda/messages"
 
 	"github.com/cprates/lws/pkg/llambda"
 )
 
-const lambdaPort string = "12345"
+const (
+	lambdaPort string = "12345"
+	lambdaAddr        = "127.0.0.1:" + lambdaPort
+)
+
+const readySignal string = "#booted#"
 
 type Server struct {
 	listener net.Listener
 }
 
 func (s *Server) Exec(args *llambda.LambdaArgs, reply *messages.InvokeResponse) (err error) {
-	// TODO: this is being shared with the host a it shouldn't
+	// TODO: env vars are being shared with the host which I think is expected the way
+	//  this is done right now but, maybe it shouldn't have some env vars from the host...
 	//fmt.Println(os.Environ())
 	fmt.Println("Agent PID:", os.Getpid())
 	fmt.Print("Agent CWD: ")
@@ -31,7 +38,7 @@ func (s *Server) Exec(args *llambda.LambdaArgs, reply *messages.InvokeResponse) 
 	lambdaArgs := args
 
 	// executes our lambda
-	conn, err := net.Dial("tcp", "127.0.0.1:"+lambdaPort)
+	conn, err := net.DialTimeout("tcp", lambdaAddr, 2*time.Millisecond)
 	if err != nil {
 		err = fmt.Errorf("dail to lambda failed: %s", err)
 		return
@@ -61,6 +68,7 @@ func (s *Server) Exec(args *llambda.LambdaArgs, reply *messages.InvokeResponse) 
 
 	err = c.Call("Function.Invoke", &req, reply)
 	if err != nil {
+		// TODO: still need to be tested when the process is finished end to end
 		fmt.Println("Err2:", err)
 		fmt.Println("Err2:", reply)
 		return
@@ -82,8 +90,6 @@ func (s *Server) Shutdown(arg string, reply *string) (err error) {
 	fmt.Println("Shutting down gobox...")
 	err = s.listener.Close()
 	if err != nil {
-		// TODO: right way to log? or should be to stderr directly?
-		fmt.Println(err)
 		return
 	}
 
@@ -91,36 +97,70 @@ func (s *Server) Shutdown(arg string, reply *string) (err error) {
 	return
 }
 
-func runLambda() {
+func runLambda() (err error) {
 
 	entryPoint := os.Args[2]
-	if err := os.Setenv("AWS_LAMBDA_FUNCTION_NAME", os.Args[3]); err != nil {
+	if err = os.Setenv("AWS_LAMBDA_FUNCTION_NAME", os.Args[3]); err != nil {
+		err = fmt.Errorf("setting AWS_LAMBDA_FUNCTION_NAME: %s", err)
 		return
 	}
-	if err := os.Setenv("_LAMBDA_SERVER_PORT", lambdaPort); err != nil {
+	if err = os.Setenv("_LAMBDA_SERVER_PORT", lambdaPort); err != nil {
+		err = fmt.Errorf("setting _LAMBDA_SERVER_PORT: %s", err)
 		return
 	}
 
 	// setup env vars
 	for i := 4; len(os.Args) > i+1; i += 2 {
-		e := os.Setenv(os.Args[i], os.Args[i+1])
-		if e != nil {
-			fmt.Println("error setting user env vars:", e)
+		if err = os.Setenv(os.Args[i], os.Args[i+1]); err != nil {
+			err = fmt.Errorf("gobox: setting user env vars: %s", err)
+			return
 		}
 	}
 
-	// initialise our lambda. At this stage it will only be waiting for us to send the request
-	execErrC := make(chan error, 1)
-
 	cmd := exec.Command(entryPoint)
-	cmd.Stdin = os.Stdin
+	// TODO: re-drive this later
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+
 	go func() {
 		e := cmd.Run()
-		fmt.Println("Error from lambda execution:", e)
-		execErrC <- e
+		fmt.Println("Lambda execution returned an error:", e)
 	}()
+
+	return
+}
+
+// lambdaReady checks if the lambda rpc server is ready to accept connections by trying to connect
+// and retrying on dial errors up to 4 times.
+func lambdaReady(addr string) bool {
+
+	for i := 0; i < 4; i++ {
+		// this is a local connection without DNS resolution so it should be fast. The testes
+		// revealed to take an average of ~300 microseconds. But because this may vary depending
+		// on the hardware it is running, let's make it a bit more robust with 2ms
+		conn, err := net.DialTimeout("tcp", addr, 2*time.Millisecond)
+
+		if err != nil {
+			e, ok := err.(*net.OpError)
+
+			if ok && e.Op == "dial" {
+				fmt.Printf("Failed to check lambda status, attempt %d: %s\n", i+1, e)
+				// try again after a small delay
+				// This value really depends on the machine this is running, so rather have
+				// a delay to make this process more robust with less retries
+				time.Sleep(5 * time.Millisecond)
+				continue
+			}
+			fmt.Println("Failed checking lambda status:", err)
+			return false
+		}
+
+		_ = conn.Close()
+		return true
+	}
+
+	fmt.Println("Lambda seems to not be responding")
+	return false
 }
 
 // Usage: ./gobox port entrypoint boxName <env vars>...
@@ -148,7 +188,27 @@ func main() {
 		return
 	}
 
-	runLambda()
+	err = runLambda()
+	if err != nil {
+		fmt.Println("Failed to launch lambda:", err)
+		return
+	}
+
+	lambdaReady(lambdaAddr)
+
+	// Send the signal to the Box system indicating the lambda has been launched successfully
+	n, err := os.Stdout.WriteString(readySignal)
+	if err != nil {
+		fmt.Println("Failed to signal box system:", err)
+		return
+	}
+	if n != len(readySignal) {
+		fmt.Printf(
+			"Failed to write signal to box system, wrote %d bytes, expected %d",
+			n, len(readySignal),
+		)
+		return
+	}
 
 	wg := sync.WaitGroup{}
 	for {
