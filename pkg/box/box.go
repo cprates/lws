@@ -61,6 +61,7 @@ func Start(
 	logger.SetLevel(logrus.DebugLevel)
 	logger.SetOutput(logOutput)
 
+	shutdown.Add(1)
 	pushC := make(chan Action)
 	m := &manager{
 		Workdir: workdir,
@@ -118,7 +119,7 @@ func (m *manager) cleanup() {
 			box := v.(*boxtype)
 			box.instances.Range(
 				func(ik interface{}, iv interface{}) bool {
-					inst := iv.(*instance)
+					inst := iv.(instance)
 					err := m.destroyBox(box.name, inst.id)
 					if err != nil {
 						m.logger.Errorf("Failed to destroy box %s:%s: %s", box.name, inst.id, err)
