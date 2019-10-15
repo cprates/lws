@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/cprates/lws/pkg/box"
@@ -48,11 +49,11 @@ type Instance struct {
 	functions map[string]*function // by function name
 	// TODO: align
 
-	// container's manager
-	boxManager *box.Manager
+	// container manager's channel
+	boxManagerC chan<- box.Action
 }
 
-// Args sent to the lambda application. Must be synchronized with the
+// LambdaArgs sent to the lambda application. Must be synchronized with the
 // struct in the agent.
 type LambdaArgs struct {
 	FunctionName string
@@ -69,24 +70,27 @@ var (
 )
 
 // New returns a ready to use instance of LLambda, addr must be of the form host:port.
-func New(account, region, proto, addr, workdir string) (instance *Instance) {
+func New(
+	account, region, proto, addr, workdir string,
+	stopC <-chan struct{},
+	shutdown *sync.WaitGroup,
+) (
+	instance *Instance,
+) {
 	return &Instance{
 		AccountID: account,
 		Region:    region,
 		Proto:     proto,
 		Addr:      addr,
 		functions: map[string]*function{},
-		// TODO: instead of passing os.Stderr pass it the given logger (after I've get rid of the logrus...)
-		boxManager: box.New(workdir, os.Stderr),
+		// TODO: instead of passing os.Stderr pass it the given logger
+		//  (after I've get rid of the logrus...)
+		boxManagerC: box.Start(workdir, os.Stderr, stopC, shutdown),
 	}
 }
 
 // Process requests from the API.
 func (i *Instance) Process(reqC <-chan Request, stopC <-chan struct{}) {
-
-	go func() {
-		i.boxManager.Start(stopC)
-	}()
 
 	lifecycleTick := time.NewTicker(time.Second)
 
@@ -142,8 +146,9 @@ func (i *Instance) handleLifecycle() {
 				)
 			}
 
-			err = i.boxManager.DestroyBox(function.name, inst.id)
-			if err != nil {
+			resC := make(chan func() error, 1)
+			i.boxManagerC <- box.DestroyBox(function.name, inst.id, resC)
+			if err = (<-resC)(); err != nil {
 				log.Errorln("Failed to destroy box", function.name, inst.id, err)
 			}
 			toRemove = append(toRemove, elem)
@@ -174,7 +179,8 @@ func (i *Instance) createFunction(req Request) {
 	}
 	revID := u.String()
 
-	// TODO: params.FunctionName has to be parsed. it may contain the arn. In case of an ANR, we MUST extract the name ONLY
+	// TODO: params.FunctionName has to be parsed. it may contain the arn. In case of an ANR, we
+	//  MUST extract the name ONLY
 	fName := params.FunctionName
 	lrn := "arn:aws:lambda:" + i.Region + ":" + i.AccountID + ":function:" + fName
 
@@ -192,12 +198,16 @@ func (i *Instance) createFunction(req Request) {
 		return
 	}
 
-	codeSize, err := i.boxManager.CreateBox(
+	resC := make(chan func() (int, error), 1)
+	i.boxManagerC <- box.CreateBox(
 		fName,
 		Runtime.imageFile[params.Runtime],
 		Runtime.entrypoint[params.Runtime],
 		buf,
+		resC,
 	)
+
+	codeSize, err := (<-resC)()
 	if err != nil {
 		req.resC <- &ReqResult{Err: err}
 		return
@@ -306,17 +316,18 @@ func (i *Instance) invokeFunction(req Request) {
 			args = append(args, []string{k, v}...) // TODO: improve this to avoid creating a temporary array
 		}
 
-		var err error
-		err = i.boxManager.LaunchBoxInstance(
+		resC := make(chan func() error, 1)
+		i.boxManagerC <- box.LaunchBoxInstance(
 			function.name,
 			instanceID,
 			"172.18.0.6/30", // TODO
 			portStr,
 			"172.18.0.5/30", // TODO
+			resC,
 			// box arguments
 			args...,
 		)
-		if err != nil {
+		if err := (<-resC)(); err != nil {
 			req.resC <- &ReqResult{Err: err}
 			return
 		}

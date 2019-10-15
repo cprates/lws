@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -17,7 +18,7 @@ import (
 // name of the file containing the code to run in a box instance
 const codeFileName = "code.zip"
 
-type Manager struct {
+type manager struct {
 	// directory where boxes are going to be created
 	Workdir string
 	boxes   map[string]*boxtype
@@ -28,39 +29,62 @@ type boxtype struct {
 	name          string
 	image         string // path/file_name
 	entryPoint    string
-	instances     map[string]*boxInstance
+	instances     map[string]*instance
 	agentHostname string // is also used as namespace name
 }
 
-type boxInstance struct {
+type instance struct {
 	id   string
 	ip   string
 	port string
 }
 
+// Action to be executed on the given Manager instance. The instance type is not exported
+// so the user can not call these actions directly, making the pushC returned on Start
+// the only way to communicate with an instance.
+type Action func(m *manager)
+
 // New creates an empty box Manager ready to use that will store and create new boxes under
 // workdir which is advisable to be a full path.
-func New(workdir string, logOutput io.Writer) *Manager {
+
+// Start starts a goroutine to run a new box Manager that will store and create new boxes
+// under workdir which is advisable to be a full path, and log to logOutput, returning a
+// channel for external communication.
+func Start(
+	workdir string,
+	logOutput io.Writer,
+	stopC <-chan struct{},
+	shutdown *sync.WaitGroup,
+) chan<- Action {
 
 	logger := logrus.New()
 	logger.SetLevel(logrus.DebugLevel)
 	logger.SetOutput(logOutput)
 
-	m := &Manager{
+	pushC := make(chan Action)
+	m := &manager{
 		Workdir: workdir,
 		boxes:   map[string]*boxtype{},
 		logger:  logger,
 	}
 
-	return m
+	go func() {
+		m.Process(pushC, stopC)
+		shutdown.Done()
+	}()
+
+	return pushC
 }
 
-// Start the internal mechanisms to handle errors.
-func (m *Manager) Start(stopC <-chan struct{}) {
+// Process holds the main loop of the Manager which means it blocks, processes actions received
+// trough reqC, stopping as soon as it reads a message from stopC.
+func (m *manager) Process(reqC <-chan Action, stopC <-chan struct{}) {
 
 	running := true
 	for running {
 		select {
+		case action := <-reqC:
+			action(m)
 		case <-stopC:
 			running = false
 			m.cleanup()
@@ -70,16 +94,15 @@ func (m *Manager) Start(stopC <-chan struct{}) {
 	m.logger.Println("Shutting down Box Manager...")
 }
 
-func (m *Manager) cleanup() {
+func (m *manager) cleanup() {
 	for _, box := range m.boxes {
 		for _, inst := range box.instances {
-			err := m.DestroyBox(box.name, inst.id)
+			err := m.destroyBox(box.name, inst.id)
 			if err != nil {
 				m.logger.Errorf("Failed to destroy box %s:%s: %s", box.name, inst.id, err)
 			}
 		}
 	}
-
 }
 
 // CreateBox creates a new box by first creating folder 'name' and stores the code in it with
@@ -87,67 +110,87 @@ func (m *Manager) cleanup() {
 // adds the file with the code to it at the root of the root.
 // name is also used as hostname and namespace name in which the box instance will be running.
 // TODO: make it thread safe
-func (m *Manager) CreateBox(name, imageFile, entryPoint string, code []byte) (n int, err error) {
+func CreateBox(
+	name, imageFile, entryPoint string,
+	code []byte,
+	resC chan<- func() (int, error),
+) Action {
+	return func(m *manager) {
+		var err error
+		var codeSize int
+		defer func() {
+			resC <- func() (int, error) {
+				return codeSize, err
+			}
+		}()
 
-	_, exist := m.boxes[name]
-	if exist {
-		err = errors.New("box already exist")
-		return
-	}
-
-	boxDir := path.Join(m.Workdir, name)
-	if _, err = os.Stat(boxDir); os.IsNotExist(err) {
-		err = os.MkdirAll(boxDir, 0766)
-		if err != nil {
-			err = fmt.Errorf("while creating dir %q: %s", boxDir, err)
+		_, exist := m.boxes[name]
+		if exist {
+			err = errors.New("box already exist")
 			return
 		}
-	}
 
-	// makes sure we delete all the garbage if something fails
-	defer func() {
-		if err != nil {
-			e := os.RemoveAll(boxDir)
-			if e != nil {
-				m.logger.Errorf("Failed to undo box creation: %s", e)
+		boxDir := path.Join(m.Workdir, name)
+		if _, err = os.Stat(boxDir); os.IsNotExist(err) {
+			err = os.MkdirAll(boxDir, 0766)
+			if err != nil {
+				err = fmt.Errorf("while creating dir %q: %s", boxDir, err)
+				return
 			}
 		}
-	}()
 
-	// stores the code to be executed on this box under codeFileName file
-	codePath := path.Join(boxDir, codeFileName)
-	f, err := os.OpenFile(codePath, os.O_CREATE|os.O_WRONLY, 0766)
-	if err != nil {
-		err = fmt.Errorf("while opening file code at %q: %s", codePath, err)
-		return
-	}
-	defer func() {
-		e := f.Close()
-		if err == nil && e != nil {
-			err = fmt.Errorf("while closing file code %q: %s", codePath, e)
+		// makes sure we delete all the garbage if something fails
+		defer func() {
+			if err != nil {
+				e := os.RemoveAll(boxDir)
+				if e != nil {
+					m.logger.Errorf("Failed to undo box creation: %s", e)
+				}
+			}
+		}()
+
+		// stores the code to be executed on this box under codeFileName file
+		codePath := path.Join(boxDir, codeFileName)
+		f, err := os.OpenFile(codePath, os.O_CREATE|os.O_WRONLY, 0766)
+		if err != nil {
+			err = fmt.Errorf("while opening file code at %q: %s", codePath, err)
+			return
 		}
-	}()
+		defer func() {
+			e := f.Close()
+			if err == nil && e != nil {
+				err = fmt.Errorf("while closing file code %q: %s", codePath, e)
+			}
+		}()
 
-	n, err = f.Write(code)
-	if err != nil {
-		err = fmt.Errorf("while writing code at %q: %s", codePath, err)
-		return
+		codeSize, err = f.Write(code)
+		if err != nil {
+			err = fmt.Errorf("while writing code at %q: %s", codePath, err)
+			return
+		}
+
+		// create the new box with no instances
+		m.boxes[name] = &boxtype{
+			name:          name,
+			image:         imageFile,
+			entryPoint:    entryPoint,
+			instances:     map[string]*instance{},
+			agentHostname: name,
+		}
 	}
-
-	// create the new box with no instances
-	m.boxes[name] = &boxtype{
-		name:          name,
-		image:         imageFile,
-		entryPoint:    entryPoint,
-		instances:     map[string]*boxInstance{},
-		agentHostname: name,
-	}
-
-	return
 }
 
 // TODO: make it theread safe
-func (m *Manager) DestroyBox(name, instanceId string) (err error) {
+func DestroyBox(name, instanceId string, resC chan<- func() error) Action {
+	return func(m *manager) {
+		err := m.destroyBox(name, instanceId)
+		resC <- func() error {
+			return err
+		}
+	}
+}
+
+func (m *manager) destroyBox(name, instanceId string) (err error) {
 
 	box, exist := m.boxes[name]
 	if !exist {
@@ -186,119 +229,130 @@ func (m *Manager) DestroyBox(name, instanceId string) (err error) {
 // nextHop is basically the default gateway to be used by this box instance.
 //
 // TODO: make it theread safe
-func (m *Manager) LaunchBoxInstance(
+func LaunchBoxInstance(
 	name, instanceId, ip, port, nextHop string,
+	resC chan<- func() error,
 	args ...string,
-) (
-	err error,
-) {
+) Action {
+	return func(m *manager) {
+		var err error
+		defer func() {
+			resC <- func() error {
+				return err
+			}
+		}()
 
-	box, exist := m.boxes[name]
-	if !exist {
-		err = errors.New("box does not exist")
-		return
-	}
-
-	instance, exist := box.instances[instanceId]
-	if exist {
-		err = errors.New("box instance already exist")
-		return
-	}
-
-	instance = &boxInstance{
-		id:   instanceId,
-		ip:   ip,
-		port: port,
-	}
-
-	dstFolder := filepath.Join(m.Workdir, name, instanceId)
-	if _, e := os.Stat(dstFolder); !os.IsNotExist(e) {
-		// for some reason this folder already exists and it shouldn't
-		err = fmt.Errorf("folder %q already exist", dstFolder)
-		return
-	}
-	mkdirCmd := exec.Command("mkdir", "-p", dstFolder)
-	err = mkdirCmd.Run()
-	if err != nil {
-		err = fmt.Errorf("while creating dst dir %q: %s", dstFolder, err)
-		return
-	}
-
-	// TODO: --same-owner is added by default when running as root but, lets make it explicit.
-	//  On a container this runs as root
-	baseImageFile := filepath.Join(m.Workdir, box.image)
-	extractCmd := exec.Command(
-		"tar",
-		"-xpf", baseImageFile,
-		"-C", dstFolder,
-	)
-	err = extractCmd.Run()
-	if err != nil {
-		err = fmt.Errorf("while extracting base image %q to %s: %s", baseImageFile, dstFolder, err)
-		return
-	}
-
-	codeFile := filepath.Join(m.Workdir, box.name, codeFileName)
-	appFolder := filepath.Join(dstFolder, "app")
-	extractCmd = exec.Command("unzip", "-q", codeFile, "-d", appFolder)
-	err = extractCmd.Run()
-	if err != nil {
-		err = fmt.Errorf("while extracting code %q to %s: %s", codeFile, appFolder, err)
-		return
-	}
-
-	// add instance
-	box.instances[instanceId] = instance
-
-	// launch box instance
-	cmd := exec.Command(
-		"runbox.sh",
-		append(
-			[]string{box.entryPoint}, args...,
-		)...,
-	)
-	cmd.Env = []string{
-		"LAMBDA_NS=" + box.agentHostname,
-		"HOSTNAME=" + box.agentHostname + "." + instance.id,
-		"LOCAL_IP=" + instance.ip,
-		"NEXT_HOP=" + nextHop,
-		"FS_PATH=" + dstFolder,
-		"WORK_DIR=" + os.Getenv("LWS_WORK_DIR"),
-		"DEBUG=" + os.Getenv("LWS_DEBUG"),
-	}
-
-	// signal will be inspecting the output from the executed process looking for a specific
-	// string that signals the rpc server is ready.
-	signal := &signal{
-		source: m.logger.Out,
-		c:      make(chan struct{}, 1),
-	}
-
-	cmd.Stdout = signal
-	cmd.Stderr = signal
-
-	err = cmd.Start()
-	if err != nil {
-		err = fmt.Errorf("while starting box instance: %s", err)
-		return
-	}
-
-	go func() {
-		e := cmd.Wait()
-		if e != nil {
-			m.logger.Debugf("Box %q, instance %q exited with %q", name, instanceId, e)
+		box, exist := m.boxes[name]
+		if !exist {
+			err = errors.New("box does not exist")
+			return
 		}
-	}()
 
-	select {
-	case <-time.After(100 * time.Millisecond):
-		m.logger.Debugf("Didn't got the ready signal from Box %q, instance %q", name, instanceId)
-	case <-signal.c:
+		inst, exist := box.instances[instanceId]
+		if exist {
+			err = errors.New("box instance already exist")
+			return
+		}
+
+		inst = &instance{
+			id:   instanceId,
+			ip:   ip,
+			port: port,
+		}
+
+		dstFolder := filepath.Join(m.Workdir, name, instanceId)
+		if _, e := os.Stat(dstFolder); !os.IsNotExist(e) {
+			// for some reason this folder already exists and it shouldn't
+			err = fmt.Errorf("folder %q already exist", dstFolder)
+			return
+		}
+		mkdirCmd := exec.Command("mkdir", "-p", dstFolder)
+		err = mkdirCmd.Run()
+		if err != nil {
+			err = fmt.Errorf("while creating dst dir %q: %s", dstFolder, err)
+			return
+		}
+
+		// TODO: --same-owner is added by default when running as root but, lets make it explicit.
+		//  On a container this runs as root
+		baseImageFile := filepath.Join(m.Workdir, box.image)
+		extractCmd := exec.Command(
+			"tar",
+			"-xpf", baseImageFile,
+			"-C", dstFolder,
+		)
+		err = extractCmd.Run()
+		if err != nil {
+			err = fmt.Errorf(
+				"while extracting base image %q to %s: %s",
+				baseImageFile, dstFolder, err,
+			)
+			return
+		}
+
+		codeFile := filepath.Join(m.Workdir, box.name, codeFileName)
+		appFolder := filepath.Join(dstFolder, "app")
+		extractCmd = exec.Command("unzip", "-q", codeFile, "-d", appFolder)
+		err = extractCmd.Run()
+		if err != nil {
+			err = fmt.Errorf("while extracting code %q to %s: %s", codeFile, appFolder, err)
+			return
+		}
+
+		// add instance
+		box.instances[instanceId] = inst
+
+		// launch box instance
+		cmd := exec.Command(
+			"runbox.sh",
+			append(
+				[]string{box.entryPoint}, args...,
+			)...,
+		)
+		cmd.Env = []string{
+			"LAMBDA_NS=" + box.agentHostname,
+			"HOSTNAME=" + box.agentHostname + "." + inst.id,
+			"LOCAL_IP=" + inst.ip,
+			"NEXT_HOP=" + nextHop,
+			"FS_PATH=" + dstFolder,
+			"WORK_DIR=" + os.Getenv("LWS_WORK_DIR"),
+			"DEBUG=" + os.Getenv("LWS_DEBUG"),
+		}
+
+		// signal will be inspecting the output from the executed process looking for a specific
+		// string that signals the rpc server is ready.
+		signal := &signal{
+			source: m.logger.Out,
+			c:      make(chan struct{}, 1),
+		}
+
+		cmd.Stdout = signal
+		cmd.Stderr = signal
+
+		err = cmd.Start()
+		if err != nil {
+			err = fmt.Errorf("while starting box instance: %s", err)
+			return
+		}
+
+		go func() {
+			e := cmd.Wait()
+			if e != nil {
+				m.logger.Debugf("Box %q, instance %q exited with %q", name, instanceId, e)
+			}
+		}()
+
+		select {
+		case <-time.After(100 * time.Millisecond):
+			m.logger.Debugf(
+				"Didn't got the ready signal from Box %q, instance %q",
+				name, instanceId,
+			)
+		case <-signal.c:
+		}
+
+		//instance.waitReady()
 	}
-
-	//instance.waitReady()
-
-	return
 }
 
 // waitReady checks if the box rpc server is ready to accept connections by trying to connect
@@ -312,7 +366,7 @@ func (m *Manager) LaunchBoxInstance(
 //  Any way the approach using the stdout/stderr is working very well, the only downside is the
 //  existing contract between box system and the runtime (gobox) that has to know the signal message
 //  and when to send it.
-func (ins *boxInstance) waitReady() bool {
+func (ins *instance) waitReady() bool {
 
 	parsedIP, _, err := net.ParseCIDR(ins.ip)
 	if err != nil {

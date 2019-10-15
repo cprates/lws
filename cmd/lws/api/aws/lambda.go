@@ -35,7 +35,7 @@ func (i Interface) InstallLambda(
 	log.Println("Installing Lambda service")
 
 	// TODO: same structure as LSQS
-	instance := llambda.New(accountID, region, scheme, host, lambdaWorkdir)
+	instance := llambda.New(accountID, region, scheme, host, lambdaWorkdir, stopC, shutdown)
 	pushC = make(chan llambda.Request)
 	go func() {
 		instance.Process(pushC, stopC)
