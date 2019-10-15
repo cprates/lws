@@ -21,7 +21,7 @@ const codeFileName = "code.zip"
 type manager struct {
 	// directory where boxes are going to be created
 	Workdir string
-	boxes   map[string]*boxtype
+	boxes   sync.Map
 	logger  *logrus.Logger
 }
 
@@ -29,7 +29,7 @@ type boxtype struct {
 	name          string
 	image         string // path/file_name
 	entryPoint    string
-	instances     map[string]*instance
+	instances     sync.Map
 	agentHostname string // is also used as namespace name
 }
 
@@ -64,7 +64,7 @@ func Start(
 	pushC := make(chan Action)
 	m := &manager{
 		Workdir: workdir,
-		boxes:   map[string]*boxtype{},
+		boxes:   sync.Map{},
 		logger:  logger,
 	}
 
@@ -80,36 +80,63 @@ func Start(
 // trough reqC, stopping as soon as it reads a message from stopC.
 func (m *manager) Process(reqC <-chan Action, stopC <-chan struct{}) {
 
+	wg := sync.WaitGroup{}
 	running := true
 	for running {
 		select {
 		case action := <-reqC:
-			action(m)
+			wg.Add(1)
+			go func() {
+				action(m)
+				wg.Done()
+			}()
 		case <-stopC:
 			running = false
-			m.cleanup()
 		}
 	}
+
+	m.logger.Println("Waiting for all actions to finish before proceeding to cleanup...")
+	wgC := make(chan struct{}, 1)
+	go func() {
+		wg.Wait()
+		wgC <- struct{}{}
+	}()
+
+	select {
+	case <-wgC:
+	case <-time.After(500 * time.Millisecond):
+		m.logger.Println("Got timeout while waiting for all tasks to finish. Proceeding to cleanup")
+	}
+	m.cleanup()
 
 	m.logger.Println("Shutting down Box Manager...")
 }
 
 func (m *manager) cleanup() {
-	for _, box := range m.boxes {
-		for _, inst := range box.instances {
-			err := m.destroyBox(box.name, inst.id)
-			if err != nil {
-				m.logger.Errorf("Failed to destroy box %s:%s: %s", box.name, inst.id, err)
-			}
-		}
-	}
+	m.boxes.Range(
+		func(k interface{}, v interface{}) bool {
+			box := v.(*boxtype)
+			box.instances.Range(
+				func(ik interface{}, iv interface{}) bool {
+					inst := iv.(*instance)
+					err := m.destroyBox(box.name, inst.id)
+					if err != nil {
+						m.logger.Errorf("Failed to destroy box %s:%s: %s", box.name, inst.id, err)
+					}
+
+					return true
+				},
+			)
+
+			return true
+		},
+	)
 }
 
 // CreateBox creates a new box by first creating folder 'name' and stores the code in it with
 // as codeFileName, then makes a copy of the base image for the given runtime and finally
 // adds the file with the code to it at the root of the root.
 // name is also used as hostname and namespace name in which the box instance will be running.
-// TODO: make it thread safe
 func CreateBox(
 	name, imageFile, entryPoint string,
 	code []byte,
@@ -124,7 +151,7 @@ func CreateBox(
 			}
 		}()
 
-		_, exist := m.boxes[name]
+		_, exist := m.boxes.Load(name)
 		if exist {
 			err = errors.New("box already exist")
 			return
@@ -170,17 +197,19 @@ func CreateBox(
 		}
 
 		// create the new box with no instances
-		m.boxes[name] = &boxtype{
-			name:          name,
-			image:         imageFile,
-			entryPoint:    entryPoint,
-			instances:     map[string]*instance{},
-			agentHostname: name,
-		}
+		m.boxes.Store(
+			name,
+			&boxtype{
+				name:          name,
+				image:         imageFile,
+				entryPoint:    entryPoint,
+				instances:     sync.Map{},
+				agentHostname: name,
+			},
+		)
 	}
 }
 
-// TODO: make it theread safe
 func DestroyBox(name, instanceId string, resC chan<- func() error) Action {
 	return func(m *manager) {
 		err := m.destroyBox(name, instanceId)
@@ -192,19 +221,20 @@ func DestroyBox(name, instanceId string, resC chan<- func() error) Action {
 
 func (m *manager) destroyBox(name, instanceId string) (err error) {
 
-	box, exist := m.boxes[name]
+	b, exist := m.boxes.Load(name)
 	if !exist {
 		err = errors.New("box does not exist")
 		return
 	}
+	box := b.(*boxtype)
 
-	_, exist = box.instances[instanceId]
+	_, exist = box.instances.Load(instanceId)
 	if !exist {
 		err = errors.New("box instance does not exist")
 		return
 	}
 
-	delete(box.instances, instanceId)
+	box.instances.Delete(instanceId)
 
 	folder := filepath.Join(m.Workdir, name, instanceId)
 	rmCmd := exec.Command(
@@ -228,7 +258,6 @@ func (m *manager) destroyBox(name, instanceId string) (err error) {
 // ip is a CIDR notation ip that will be configured on the box's network interface.
 // nextHop is basically the default gateway to be used by this box instance.
 //
-// TODO: make it theread safe
 func LaunchBoxInstance(
 	name, instanceId, ip, port, nextHop string,
 	resC chan<- func() error,
@@ -242,19 +271,20 @@ func LaunchBoxInstance(
 			}
 		}()
 
-		box, exist := m.boxes[name]
+		b, exist := m.boxes.Load(name)
 		if !exist {
 			err = errors.New("box does not exist")
 			return
 		}
+		box := b.(*boxtype)
 
-		inst, exist := box.instances[instanceId]
+		_, exist = box.instances.Load(instanceId)
 		if exist {
 			err = errors.New("box instance already exist")
 			return
 		}
 
-		inst = &instance{
+		inst := instance{
 			id:   instanceId,
 			ip:   ip,
 			port: port,
@@ -299,9 +329,6 @@ func LaunchBoxInstance(
 			return
 		}
 
-		// add instance
-		box.instances[instanceId] = inst
-
 		// launch box instance
 		cmd := exec.Command(
 			"runbox.sh",
@@ -344,11 +371,13 @@ func LaunchBoxInstance(
 
 		select {
 		case <-time.After(100 * time.Millisecond):
-			m.logger.Debugf(
-				"Didn't got the ready signal from Box %q, instance %q",
+			err = fmt.Errorf(
+				"didn't got the ready signal from Box %q, instance %q",
 				name, instanceId,
 			)
 		case <-signal.c:
+			// add instance only after we have the confirmation it was successfully added
+			box.instances.Store(instanceId, inst)
 		}
 
 		//instance.waitReady()
