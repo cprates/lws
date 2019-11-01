@@ -48,4 +48,9 @@ ip route add default via $(echo $NEXT_HOP | cut -d/ -f1)
 arping -c 2 -w 1 -I eth0 -s $(echo $LOCAL_IP | cut -d/ -f1) 255.255.255.255 > /dev/null &
 
 
-chroot $FS_PATH $@
+chroot $FS_PATH \
+  env - \
+  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  HOSTNAME=$HOSTNAME \
+  HOME=/root \
+  $@
