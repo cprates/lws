@@ -25,12 +25,9 @@ mknod -m 666 $FS_PATH/dev/tty c 5 0
 mknod -m 444 $FS_PATH/dev/random c 1 8
 mknod -m 444 $FS_PATH/dev/urandom c 1 9
 
-# TODO: boxes are sharing stdin, stdout, etc with host and it shouldn't. Fix this later.
-#ln -s /proc/self/fd $FS_PATH/dev/fd
-#ln -s /proc/self/fd/0 $FS_PATH/dev/stdin
-#ln -s /proc/self/fd/1 $FS_PATH/dev/stdout
-#ln -s /proc/self/fd/2 $FS_PATH/dev/stderr
-#ln -s /proc/kcore $FS_PATH/dev/core
+ln -s /proc/self/fd/0 $FS_PATH/dev/stdin
+ln -s /proc/self/fd/1 $FS_PATH/dev/stdout
+ln -s /proc/self/fd/2 $FS_PATH/dev/stderr
 
 mkdir $FS_PATH/dev/pts
 mkdir $FS_PATH/dev/shm
