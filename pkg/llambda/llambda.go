@@ -1,56 +1,43 @@
 package llambda
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
-	"sync"
 	"time"
 
-	"github.com/cprates/lws/pkg/box"
+	"github.com/cprates/ippool"
 	"github.com/cprates/lws/pkg/list"
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 )
 
-// Runtime contains all supported runtimes along with some configs.
-var Runtime = struct {
-	Supported  []string
-	imageFile  map[string]string
-	entrypoint map[string]string
-}{
-	Supported: []string{
-		"go1.x",
-	},
-	imageFile: map[string]string{
-		"go1.x": "golang_base.tar",
-	},
-	entrypoint: map[string]string{
-		"go1.x": "/bin/gobox",
-	},
-}
-
-// LLambda is the interface to implement if you want to implement your own Lambda service.
-type LLambda interface {
+// LLambdaer is the interface to implement if you want to implement your own Lambda service.
+type LLambdaer interface {
 	Process(<-chan Request, <-chan struct{})
 }
 
-// Instance represents an instance of lLambda core.
-type Instance struct {
+// LLambda represents an instance of lLambda core.
+type LLambda struct {
 	AccountID string
 	Region    string
 	Proto     string
 	Addr      string
+	Workdir   string
 
-	functions map[string]*function // by function name
+	functions       map[string]*function // by function name
+	instanceCounter uint64               // used as lambda instance ids
+	logger          *log.Entry
+	ipPool          *ippool.Dhcpc
+	ipNet           *net.IPNet
 	// TODO: align
-
-	// container manager's channel
-	boxManagerC chan<- box.Action
 }
 
 // LambdaArgs sent to the lambda application. Must be synchronized with the
@@ -69,29 +56,57 @@ var (
 	ErrMaxConcurrencyReached = errors.New("max concurrency reached")
 )
 
+// Runtime contains all supported runtimes along with some configs.
+var Runtime = map[string]struct {
+	imageFile  string
+	entrypoint string
+}{
+	"go1.x": {
+		imageFile:  "golang_base.tar",
+		entrypoint: "/bin/gobox",
+	},
+}
+
+// TODO: temporary, til I get the zfs implemented
+// name of the file containing the code to run in a box instance
+const codeFileName = "code.zip"
+
 // New returns a ready to use instance of LLambda, addr must be of the form host:port.
 func New(
-	account, region, proto, addr, workdir string,
-	stopC <-chan struct{},
-	shutdown *sync.WaitGroup,
+	account, region, proto, addr, network, workdir string, logger *log.Entry,
 ) (
-	instance *Instance,
+	*LLambda, error,
 ) {
-	return &Instance{
+	if err := initTemplates(); err != nil {
+		return nil, fmt.Errorf("unable to parse templates: %s", err)
+	}
+
+	ipPool, err := ippool.New(network)
+	if err != nil {
+		return nil, err
+	}
+	// TODO: burn the first ip because the bridge iface is using the first one. This can be
+	//  fixed after the network scheme is sorted
+	ipPool.IPv4()
+	ipPool.IPv4()
+
+	_, ipNet, _ := net.ParseCIDR(network)
+
+	return &LLambda{
 		AccountID: account,
 		Region:    region,
 		Proto:     proto,
 		Addr:      addr,
+		Workdir:   workdir,
 		functions: map[string]*function{},
-		// TODO: instead of passing os.Stderr pass it the given logger
-		//  (after I've get rid of the logrus...)
-		boxManagerC: box.Start(workdir, os.Stderr, stopC, shutdown),
-	}
+		logger:    logger,
+		ipPool:    ipPool,
+		ipNet:     ipNet,
+	}, nil
 }
 
 // Process requests from the API.
-func (i *Instance) Process(reqC <-chan Request, stopC <-chan struct{}) {
-
+func (l *LLambda) Process(reqC <-chan Request, stopC <-chan struct{}) {
 	lifecycleTick := time.NewTicker(time.Second)
 
 forloop:
@@ -100,9 +115,9 @@ forloop:
 		case req := <-reqC:
 			switch req.action {
 			case "CreateFunction":
-				i.createFunction(req)
+				l.createFunction(req)
 			case "InvokeFunction":
-				i.invokeFunction(req)
+				l.invokeFunction(req)
 			default:
 				req.resC <- &ReqResult{Err: fmt.Errorf("%q not implemented", req.action)}
 				break
@@ -113,7 +128,7 @@ forloop:
 			//  the service can not serve requests from clients...
 			//  To avoid this, this function could be running on its own in a separate goroutine
 			//  and if we do that, the access to function.idleInstances MUST be thread safe
-			i.handleLifecycle()
+			l.handleLifecycle()
 		case <-stopC:
 			break forloop
 		}
@@ -123,34 +138,31 @@ forloop:
 	lifecycleTick.Stop()
 }
 
-func (i *Instance) handleLifecycle() {
-	for _, function := range i.functions {
+func (l *LLambda) handleLifecycle() {
+	for _, function := range l.functions {
 		var toRemove []*list.Element
 		// safe to access function.idleInstances because only one action is processed at a time
 		for elem := function.idleInstances.Front(); elem != nil; elem = elem.Next() {
-			inst := elem.Value.(*instance)
-			if time.Now().Before(inst.lifeDeadline) {
+			inst := elem.Value.(funcInstancer)
+			if time.Now().Before(inst.LifeDeadline()) {
 				continue
 			}
 
 			log.Debugf(
 				"Destroying instance %q, lambda %q, after being idle for %d seconds",
-				inst.id, function.name, function.timeout,
+				inst.ID(), function.name, function.timeout,
 			)
 
 			err := inst.Shutdown()
 			if err != nil {
 				log.Errorf(
 					"Failed to shutdown lambda %q, instance %q: %s",
-					function.name, inst.id, err,
+					function.name, inst.ID(), err,
 				)
 			}
+			// free ip
+			l.ipPool.Release4(inst.IP())
 
-			resC := make(chan func() error, 1)
-			i.boxManagerC <- box.DestroyBox(function.name, inst.id, resC)
-			if err = (<-resC)(); err != nil {
-				log.Errorln("Failed to destroy box", function.name, inst.id, err)
-			}
 			toRemove = append(toRemove, elem)
 		}
 
@@ -160,11 +172,10 @@ func (i *Instance) handleLifecycle() {
 	}
 }
 
-func (i *Instance) createFunction(req Request) {
-
+func (l *LLambda) createFunction(req Request) {
 	params := req.params.(ReqCreateFunction)
 
-	if _, exists := i.functions[params.FunctionName]; exists {
+	if _, exists := l.functions[params.FunctionName]; exists {
 		req.resC <- &ReqResult{
 			Err:     ErrFunctionAlreadyExist,
 			ErrData: "function already exist: " + params.FunctionName,
@@ -182,54 +193,48 @@ func (i *Instance) createFunction(req Request) {
 	// TODO: params.FunctionName has to be parsed. it may contain the arn. In case of an ANR, we
 	//  MUST extract the name ONLY
 	fName := params.FunctionName
-	lrn := "arn:aws:lambda:" + i.Region + ":" + i.AccountID + ":function:" + fName
+	lrn := "arn:aws:lambda:" + l.Region + ":" + l.AccountID + ":function:" + fName
 
 	if src, ok := params.Code["ZipFile"]; !ok {
 		req.resC <- &ReqResult{Err: fmt.Errorf("unsupported code source %q", src)}
 		return
 	}
 
-	encodedCode := params.Code["ZipFile"]
-	buf := make([]byte, base64.StdEncoding.DecodedLen(len(encodedCode)))
-
-	_, err = base64.StdEncoding.Decode(buf, []byte(params.Code["ZipFile"]))
+	buf, err := base64.StdEncoding.DecodeString(params.Code["ZipFile"])
 	if err != nil {
 		req.resC <- &ReqResult{Err: err}
 		return
 	}
 
-	resC := make(chan func() (int, error), 1)
-	i.boxManagerC <- box.CreateBox(
-		fName,
-		Runtime.imageFile[params.Runtime],
-		Runtime.entrypoint[params.Runtime],
-		buf,
-		resC,
-	)
-
-	codeSize, err := (<-resC)()
-	if err != nil {
-		req.resC <- &ReqResult{Err: err}
-		return
-	}
-
+	fFolder := path.Join(l.Workdir, fName)
 	f := function{
-		description:   params.Description,
-		envVars:       params.Environment.Variables,
-		handler:       params.Handler,
-		memorySize:    params.MemorySize,
-		name:          fName,
-		lrn:           lrn,
-		publish:       params.Publish,
-		revID:         revID,
-		role:          params.Role,
-		runtime:       params.Runtime,
-		timeout:       params.Timeout,
-		version:       "$LATEST",
-		idleInstances: list.New(),
+		folder:            fFolder,
+		runtimeImage:      path.Join(l.Workdir, Runtime[params.Runtime].imageFile),
+		runtimeEntryPoint: Runtime[params.Runtime].entrypoint,
+		usercodeFile:      filepath.Join(l.Workdir, fName, codeFileName),
+		description:       params.Description,
+		envVars:           params.Environment.Variables,
+		handler:           filepath.Join("/", "app", params.Handler),
+		memorySize:        params.MemorySize,
+		name:              fName,
+		lrn:               lrn,
+		publish:           params.Publish,
+		revID:             revID,
+		role:              params.Role,
+		timeout:           params.Timeout,
+		version:           "$LATEST",
+		idleInstances:     list.New(),
+		containerManager:  &cmanager{workdir: fFolder},
+		logger:            l.logger,
 	}
 
-	i.functions[f.name] = &f
+	codeSize, err := f.Init(bytes.NewReader(buf))
+	if err != nil {
+		req.resC <- &ReqResult{Err: err}
+		return
+	}
+
+	l.functions[f.name] = &f
 	codeHash := sha256.Sum256(buf)
 	req.resC <- &ReqResult{
 		Data: map[string]interface{}{
@@ -246,22 +251,21 @@ func (i *Instance) createFunction(req Request) {
 			"MemorySize":   f.memorySize,
 			"RevisionId":   f.revID,
 			"Role":         f.role,
-			"Runtime":      f.runtime,
+			"Runtime":      params.Runtime,
 			"Timeout":      f.timeout,
 			"Version":      f.version,
 		},
 	}
 }
 
-func (i *Instance) invokeFunction(req Request) {
-
+func (l *LLambda) invokeFunction(req Request) {
 	params := req.params.(ReqInvokeFunction)
 
-	function, exist := i.functions[params.FunctionName]
+	function, exist := l.functions[params.FunctionName]
 	if !exist {
 		req.resC <- &ReqResult{
 			Err:     ErrFunctionNotFound,
-			ErrData: "Function not found: " + params.FunctionName,
+			ErrData: "function not found: " + params.FunctionName,
 		}
 		return
 	}
@@ -289,68 +293,52 @@ func (i *Instance) invokeFunction(req Request) {
 		return
 	}
 
-	//err := i.functions[params.FunctionName].invoke(
-	//	params.Payload, params.Qualifier, params.InvocationType, params.LogType,
-	//)
-	// TODO: simulate random delay of a lambda being created/invoked?
+	// TODO: simulate random delay of a lambda being created/invoked? - should be configurable
 	//time.Sleep(500 * time.Millisecond)
 
-	instanceID := "0" // TODO: generate this... short uuid?
-	port := 50127
-	portStr := strconv.Itoa(port) // TODO: sequential ports on a ring buffer
-	var inst *instance
-	// if no idle instances available, create a new one if didn't reach the limit
+	instanceID := strconv.FormatUint(l.instanceCounter, 10)
+	l.instanceCounter++
+
+	var fInstance funcInstancer
+	var err error
+	// if no idle instances available, create a new one if the limit wasn't reached
 	switch elem := function.idleInstances.PullFront(); elem {
 	case nil:
 		log.Debugln("No instances available, creating....")
 		// TODO: when it supports configuring max concurrency on a function, this must be
 		//  aware of it
 
-		args := []string{
-			portStr,
-			filepath.Join("/", "app", function.handler),
-			function.name,
-		}
-		// add env vars
-		for k, v := range function.envVars {
-			args = append(args, []string{k, v}...) // TODO: improve this to avoid creating a temporary array
-		}
-
-		resC := make(chan func() error, 1)
-		i.boxManagerC <- box.LaunchBoxInstance(
-			function.name,
+		ip := l.ipPool.IPv4()
+		fInstance, err = function.Instance(
 			instanceID,
-			"172.18.0.6/30", // TODO
-			portStr,
-			"172.18.0.5/30", // TODO
-			resC,
-			// box arguments
-			args...,
+			ip,
+			l.ipNet,
+			// TODO: pass std io properly
+			os.Stdin,
+			os.Stdout,
+			os.Stderr,
+			runtimeListenPort,
 		)
-		if err := (<-resC)(); err != nil {
+		if err != nil {
 			req.resC <- &ReqResult{Err: err}
 			return
 		}
-
-		inst = &instance{
-			parent:       function,
-			id:           instanceID,
-			port:         portStr,
-			ip:           "172.18.0.6", // TODO
-			lifeDeadline: time.Now().Add(time.Duration(function.timeout) * time.Second),
-		}
 	default:
-		inst = elem.(*instance)
+		fInstance = elem.(funcInstancer)
 	}
 
 	defer func() {
+		if err != nil {
+			return
+		}
+		log.Debugln("Putting instance back to idle", fInstance.ID())
 		// put instance back to the idle stack
-		function.idleInstances.PushFront(inst)
+		function.idleInstances.PushFront(fInstance)
 	}()
 
-	log.Debugln("Launching instance", inst.id)
+	log.Debugln("Launching instance", fInstance.ID())
 
-	reply, err := inst.Exec(
+	reply, err := fInstance.Exec(
 		&LambdaArgs{
 			FunctionName: function.name,
 			RequestId:    req.id,
@@ -358,8 +346,19 @@ func (i *Instance) invokeFunction(req Request) {
 			Arn:          function.lrn,
 		},
 	)
-	// TODO: handle errors
+
 	if err != nil {
+		e := fInstance.Shutdown()
+		if e != nil {
+			err = fmt.Errorf(
+				"failed to init lambda runtime: %s, AND failed to shutdown lambda %q, instance %q: %s",
+				err, function.name, fInstance.ID(), e,
+			)
+		}
+
+		// free ip
+		l.ipPool.Release4(fInstance.IP())
+
 		req.resC <- &ReqResult{Err: err}
 		return
 	}

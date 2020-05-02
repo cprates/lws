@@ -16,17 +16,18 @@ import (
 
 // LambdaAPI is the receiver for all LLambda API methods.
 type LambdaAPI struct {
-	instance llambda.LLambda
+	instance llambda.LLambdaer
 	pushC    chan llambda.Request
 	stopC    <-chan struct{}
 }
 
-// Start starts a new instance of LLambda.
+// InstallLambda starts a new instance of LLambda.
 func (i Interface) InstallLambda(
 	router *mux.Router,
-	region, accountID, scheme, host, lambdaWorkdir string,
+	region, accountID, scheme, host, network, lambdaWorkdir string,
 	stopC <-chan struct{},
 	shutdown *sync.WaitGroup,
+	logger *log.Entry,
 ) (
 	pushC chan llambda.Request,
 	err error,
@@ -35,7 +36,12 @@ func (i Interface) InstallLambda(
 	log.Println("Installing Lambda service")
 
 	// TODO: same structure as LSQS
-	instance := llambda.New(accountID, region, scheme, host, lambdaWorkdir, stopC, shutdown)
+	instance, err := llambda.New(
+		accountID, region, scheme, host, network, lambdaWorkdir, logger,
+	)
+	if err != nil {
+		return
+	}
 	pushC = make(chan llambda.Request)
 	go func() {
 		instance.Process(pushC, stopC)
@@ -153,9 +159,13 @@ func createFunction(api *LambdaAPI) http.HandlerFunc {
 		} else if len(params.Role) == 0 {
 			onLambdaInvalidParameterValue("Role is a required parameter", w)
 			return
-		} else if !stringInSlice(params.Runtime, llambda.Runtime.Supported) {
+		} else if _, ok := llambda.Runtime[params.Runtime]; !ok {
+			var sp []string
+			for k := range llambda.Runtime {
+				sp = append(sp, k)
+			}
 			onLambdaInvalidParameterValue(
-				"Runtime supported:"+strings.Join(llambda.Runtime.Supported, ","), w,
+				"Runtime supported:"+strings.Join(sp, ","), w,
 			)
 			return
 		} else if params.Timeout < 0 && params.Timeout <= 900 {

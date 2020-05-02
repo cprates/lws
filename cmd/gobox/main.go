@@ -19,16 +19,14 @@ const (
 	lambdaAddr        = "127.0.0.1:" + lambdaPort
 )
 
-const readySignal string = "#booted#"
-
+// Server exposes the go runtime API.
 type Server struct {
 	listener net.Listener
 }
 
+// Exec executes the lambda.
 func (s *Server) Exec(args *llambda.LambdaArgs, reply *messages.InvokeResponse) (err error) {
-	// TODO: env vars are being shared with the host which I think is expected the way
-	//  this is done right now but, maybe it shouldn't have some env vars from the host...
-	//fmt.Println(os.Environ())
+	fmt.Println("Env vars:", os.Environ())
 	fmt.Println("Agent PID:", os.Getpid())
 	fmt.Print("Agent CWD: ")
 	fmt.Println(os.Getwd())
@@ -73,7 +71,7 @@ func (s *Server) Exec(args *llambda.LambdaArgs, reply *messages.InvokeResponse) 
 		fmt.Println("Err2:", reply)
 		return
 	}
-	fmt.Println("res:::", string(reply.Payload))
+
 	if reply.Error != nil {
 		// ShouldExit is set at Function.Invoke when the function panics, but don't know what it does...
 		//   May be this has something to do with the InvokeOutput.Function error Handled and UnHandled.
@@ -86,6 +84,8 @@ func (s *Server) Exec(args *llambda.LambdaArgs, reply *messages.InvokeResponse) 
 	return
 }
 
+// Shutdown shuts down the lambda by closing the listener and waiting for request being served to
+// finish.
 func (s *Server) Shutdown(arg string, reply *string) (err error) {
 	fmt.Println("Shutting down gobox...")
 	err = s.listener.Close()
@@ -98,27 +98,12 @@ func (s *Server) Shutdown(arg string, reply *string) (err error) {
 }
 
 func runLambda() (err error) {
-
-	entryPoint := os.Args[2]
-	if err = os.Setenv("AWS_LAMBDA_FUNCTION_NAME", os.Args[3]); err != nil {
-		err = fmt.Errorf("setting AWS_LAMBDA_FUNCTION_NAME: %s", err)
-		return
-	}
 	if err = os.Setenv("_LAMBDA_SERVER_PORT", lambdaPort); err != nil {
 		err = fmt.Errorf("setting _LAMBDA_SERVER_PORT: %s", err)
 		return
 	}
 
-	// setup env vars
-	for i := 4; len(os.Args) > i+1; i += 2 {
-		if err = os.Setenv(os.Args[i], os.Args[i+1]); err != nil {
-			err = fmt.Errorf("gobox: setting user env vars: %s", err)
-			return
-		}
-	}
-
-	cmd := exec.Command(entryPoint)
-	// TODO: re-drive this later
+	cmd := exec.Command(os.Getenv("HANDLER"))
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -132,19 +117,17 @@ func runLambda() (err error) {
 
 // lambdaReady checks if the lambda rpc server is ready to accept connections by trying to connect
 // and retrying on dial errors up to 4 times.
-func lambdaReady(addr string) bool {
-
+func lambdaReady() bool {
 	for i := 0; i < 4; i++ {
 		// this is a local connection without DNS resolution so it should be fast. The testes
 		// revealed to take an average of ~300 microseconds. But because this may vary depending
 		// on the hardware it is running, let's make it a bit more robust with 2ms
-		conn, err := net.DialTimeout("tcp", addr, 2*time.Millisecond)
-
+		conn, err := net.DialTimeout("tcp", lambdaAddr, 2*time.Millisecond)
 		if err != nil {
 			e, ok := err.(*net.OpError)
 
 			if ok && e.Op == "dial" {
-				fmt.Printf("Failed to check lambda status, attempt %d: %s\n", i+1, e)
+				fmt.Printf("Failed to check lambda status, attempt %d: %s\n", i+1, err)
 				// try again after a small delay
 				// This value really depends on the machine this is running, so rather have
 				// a delay to make this process more robust with less retries
@@ -163,11 +146,16 @@ func lambdaReady(addr string) bool {
 	return false
 }
 
-// Usage: ./gobox port entrypoint boxName <env vars>...
-//        Env vars are passed in the form: EnvName1 EnvVal1 EnvVar2 EnvVal2
 func main() {
+	addr := ":" + os.Getenv("GOBOX_PORT")
 
-	addr := ":" + os.Args[1]
+	err := runLambda()
+	if err != nil {
+		fmt.Println("Failed to launch lambda:", err)
+		return
+	}
+
+	lambdaReady()
 
 	fmt.Println("Starting rpc server at", addr)
 
@@ -177,7 +165,6 @@ func main() {
 		return
 	}
 	defer func() {
-		// ignore error
 		_ = l.Close()
 	}()
 
@@ -185,28 +172,6 @@ func main() {
 	err = rpcSrv.Register(&Server{listener: l})
 	if err != nil {
 		fmt.Println("Failed to register rpc service:", err)
-		return
-	}
-
-	err = runLambda()
-	if err != nil {
-		fmt.Println("Failed to launch lambda:", err)
-		return
-	}
-
-	lambdaReady(lambdaAddr)
-
-	// Send the signal to the Box system indicating the lambda has been launched successfully
-	n, err := os.Stdout.WriteString(readySignal)
-	if err != nil {
-		fmt.Println("Failed to signal box system:", err)
-		return
-	}
-	if n != len(readySignal) {
-		fmt.Printf(
-			"Failed to write signal to box system, wrote %d bytes, expected %d",
-			n, len(readySignal),
-		)
 		return
 	}
 
@@ -226,10 +191,10 @@ func main() {
 
 	fmt.Printf(
 		"Waiting for request being served before terminating gobox %q at %s\n",
-		os.Args[3], os.Args[1],
+		os.Getenv("AWS_LAMBDA_FUNCTION_NAME"), addr,
 	)
 
 	wg.Wait()
 
-	fmt.Printf("Terminating gobox %q running at %s\n", os.Args[3], os.Args[1])
+	fmt.Printf("Terminating gobox %q\n", os.Getenv("AWS_LAMBDA_FUNCTION_NAME"))
 }

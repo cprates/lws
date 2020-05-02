@@ -51,6 +51,7 @@ func main() {
 	proto := os.Getenv("LWS_PROTO")
 	addr := net.JoinHostPort(os.Getenv("LWS_IP"), os.Getenv("LWS_PORT"))
 	lambdaFolder := os.Getenv("LWS_LAMBDA_WORKDIR")
+	network := os.Getenv("LWS_DOCKER_SUBNET")
 
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -77,7 +78,10 @@ func main() {
 	wg := sync.WaitGroup{}
 	stopC := make(chan struct{})
 	wg.Add(1)
-	_, err = awsAPI.InstallLambda(s.router, region, account, proto, addr, lambdaWorkdir, stopC, &wg)
+	_, err = awsAPI.InstallLambda(
+		s.router, region, account, proto, addr, network, lambdaWorkdir,
+		stopC, &wg, log.NewEntry(log.StandardLogger()),
+	)
 	if err != nil {
 		log.Errorln(err)
 		return

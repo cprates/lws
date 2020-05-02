@@ -7,10 +7,13 @@ export LWS_PROTO ?= http
 export LWS_LAMBDA_WORKDIR ?= repo
 
 # network
+# is used by lambdas as gateway
 LWS_IP ?= 172.18.0.2
+# lambda's name server
+LWS_NAMESERVER ?= 8.8.8.8
 export LWS_PORT ?= 8080
-LWS_DOCKER_SUBNET ?= 172.18.0.0/30
-LWS_NETWORK_BITS ?= 30
+LWS_DOCKER_SUBNET ?= 172.18.0.0/24
+LWS_NETWORK_BITS ?= 24
 LWS_DOCKER_GW ?= 172.18.0.1
 
 # boot
@@ -19,6 +22,8 @@ LWS_IF_HOST=eth0
 LWS_WORK_DIR=/lws
 
 
+export CURDIR
+
 init:
 	docker network create --subnet=$(LWS_DOCKER_SUBNET) lwsnetwork
 
@@ -26,7 +31,8 @@ docker_base:
 	docker build -t cprates/lws_base:latest -f Dockerfile.base .
 
 docker_lws:
-	docker build --build-arg LWS_LAMBDA_WORKDIR --build-arg LWS_PORT -t cprates/lws:latest -f Dockerfile.lws .
+	docker build --build-arg LWS_LAMBDA_WORKDIR --build-arg CURDIR \
+	 --build-arg LWS_PORT -t cprates/lws:latest -f Dockerfile.lws .
 
 build_gobox:
 	docker build -t cprates/gobox:latest -f Dockerfile.gobox . \
@@ -74,9 +80,11 @@ run:
 		--env LWS_LAMBDA_WORKDIR=$(LWS_LAMBDA_WORKDIR) \
 		--env LWS_IP=$(LWS_IP) \
 		--env LWS_PORT=$(LWS_PORT) \
+		--env LWS_DOCKER_SUBNET=$(LWS_DOCKER_SUBNET) \
 		--env LWS_NETWORK_BITS=$(LWS_NETWORK_BITS) \
 		--env LWS_DOCKER_GW=$(LWS_DOCKER_GW) \
 		--env LWS_IF_BRIDGE=$(LWS_IF_BRIDGE) \
+		--env LWS_NAMESERVER=$(LWS_NAMESERVER) \
 		--env LWS_IF_HOST=$(LWS_IF_HOST) \
 		--env LWS_WORK_DIR=$(LWS_WORK_DIR) \
 		-p $(LWS_PORT):$(LWS_PORT) \

@@ -5,6 +5,7 @@ WORKDIR /lws
 COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo ./cmd/lws
+RUN CGO_ENABLED=0 GOOS=linux GOBIN=/tmp go install github.com/cprates/box/cmd/box
 
 
 FROM alpine:3.10
@@ -12,12 +13,12 @@ FROM alpine:3.10
 ARG LWS_LAMBDA_WORKDIR
 ARG LWS_PORT
 
-# iproute2 is for ip command with namespaces support
+# iproute2 is for ip command with namespaces support. Can be removed after deprecating boot.sh
 RUN apk --no-cache add ca-certificates iproute2
 
 WORKDIR /lws
-COPY --from=builder /lws/lws .
-COPY ./cmd/runbox/runbox.sh ./cmd/runbox/stage2.sh ./scripts/boot.sh ./
+COPY --from=builder /tmp/box /lws/lws ./
+COPY ./scripts/boot.sh ./
 COPY ${LWS_LAMBDA_WORKDIR}/*_base.tar /lws/${LWS_LAMBDA_WORKDIR}/
 
 CMD ["./boot.sh"]
