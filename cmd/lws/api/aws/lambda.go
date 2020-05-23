@@ -146,8 +146,7 @@ func createFunction(api *LambdaAPI) http.HandlerFunc {
 		} else if len(params.Description) > 256 {
 			onLambdaInvalidParameterValue("Description has a maximum length of 256", w)
 			return
-		} else if len(params.FunctionName) == 0 {
-			// TODO: needs a better check
+		} else if len(params.FunctionName) == 0 || len(params.FunctionName) > 140 {
 			onLambdaInvalidParameterValue("FunctionName is a required parameter", w)
 			return
 		} else if params.MemorySize != 0 && (params.MemorySize < 128 || params.Timeout > 3072) {
@@ -180,6 +179,13 @@ func createFunction(api *LambdaAPI) http.HandlerFunc {
 		if params.MemorySize == 0 {
 			params.MemorySize = 128
 		}
+
+		functionName := parseFuncName(params.FunctionName)
+		if functionName == "" {
+			onLambdaInvalidParameterValue("invalid FunctionName: "+params.FunctionName, w)
+			return
+		}
+		params.FunctionName = functionName
 
 		log.Debugf("Creating function %q, %s", params.FunctionName, reqID)
 
@@ -233,10 +239,15 @@ func invokeFunction(api *LambdaAPI) http.HandlerFunc {
 			return
 		}
 
-		functionName, exists := mux.Vars(r)["FunctionName"]
+		nameParam, exists := mux.Vars(r)["FunctionName"]
 		if !exists {
-			// TODO: needs a better check
 			onLambdaInvalidParameterValue("FunctionName is a required parameter", w)
+			return
+		}
+
+		functionName := parseFuncName(nameParam)
+		if functionName == "" {
+			onLambdaInvalidParameterValue("invalid FunctionName: "+nameParam, w)
 			return
 		}
 
@@ -307,5 +318,26 @@ func invokeFunction(api *LambdaAPI) http.HandlerFunc {
 		if err != nil {
 			log.Errorln("Unexpected error, request", reqID, err)
 		}
+	}
+}
+
+func parseFuncName(s string) string {
+	parts := strings.Split(s, ":")
+
+	switch len(parts) {
+	case 1:
+		// Function name - my-function
+		if len(parts[0]) > 64 {
+			return ""
+		}
+		return parts[0]
+	case 7:
+		// Function ARN - arn:aws:lambda:us-west-2:123456789012:function:my-function
+		return parts[6]
+	case 2:
+		// Partial ARN - 123456789012:function:my-function
+		return parts[2]
+	default:
+		return ""
 	}
 }

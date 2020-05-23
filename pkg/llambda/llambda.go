@@ -40,7 +40,6 @@ type LLambda struct {
 	bridgeIfName    string
 	gatewayIP       string
 	nameServerIP    string
-	// TODO: align
 }
 
 // LambdaArgs sent to the lambda application. Must be synchronized with the
@@ -70,7 +69,7 @@ var Runtime = map[string]struct {
 	},
 }
 
-// TODO: temporary, til I get the zfs implemented
+// TODO: temporary, till zfs is not in place
 // name of the file containing the code to run in a box instance
 const codeFileName = "code.zip"
 
@@ -197,8 +196,6 @@ func (l *LLambda) createFunction(req Request) {
 	}
 	revID := u.String()
 
-	// TODO: params.FunctionName has to be parsed. it may contain the arn. In case of an ANR, we
-	//  MUST extract the name ONLY
 	fName := params.FunctionName
 	lrn := "arn:aws:lambda:" + l.Region + ":" + l.AccountID + ":function:" + fName
 
@@ -296,8 +293,7 @@ func (l *LLambda) invokeFunction(req Request) {
 		return
 	}
 
-	// TODO
-	// for now don't support versions
+	// TODO: add versions support
 	if params.Qualifier != "" {
 		req.resC <- &ReqResult{Err: errors.New("versions not implemented")}
 		return
@@ -341,7 +337,7 @@ func (l *LLambda) invokeFunction(req Request) {
 		if err != nil {
 			return
 		}
-		log.Debugln("Putting instance back to idle", fInstance.ID())
+		log.Debugf("Putting lambda %s instance %s back to idle\n", function.name, fInstance.ID())
 		// put instance back to the idle stack
 		function.idleInstances.PushFront(fInstance)
 	}()

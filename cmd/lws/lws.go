@@ -82,7 +82,7 @@ func main() {
 	stopC := make(chan struct{})
 	wg.Add(1)
 	_, err = awsAPI.InstallLambda(
-		s.router, region, account, proto, addr, network, bridgeIfName, gatewayIP, nameServerIP,
+		s.router, region, account, proto, addr, network, gatewayIP, bridgeIfName, nameServerIP,
 		lambdaWorkdir, stopC, &wg, log.NewEntry(log.StandardLogger()),
 	)
 	if err != nil {
