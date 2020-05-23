@@ -37,6 +37,9 @@ type LLambda struct {
 	logger          *log.Entry
 	ipPool          *ippool.Dhcpc
 	ipNet           *net.IPNet
+	bridgeIfName    string
+	gatewayIP       string
+	nameServerIP    string
 	// TODO: align
 }
 
@@ -73,7 +76,8 @@ const codeFileName = "code.zip"
 
 // New returns a ready to use instance of LLambda, addr must be of the form host:port.
 func New(
-	account, region, proto, addr, network, workdir string, logger *log.Entry,
+	account, region, proto, addr, network, gatewayIP, bridgeIfName, nameServerIP, workdir string,
+	logger *log.Entry,
 ) (
 	*LLambda, error,
 ) {
@@ -93,15 +97,18 @@ func New(
 	_, ipNet, _ := net.ParseCIDR(network)
 
 	return &LLambda{
-		AccountID: account,
-		Region:    region,
-		Proto:     proto,
-		Addr:      addr,
-		Workdir:   workdir,
-		functions: map[string]*function{},
-		logger:    logger,
-		ipPool:    ipPool,
-		ipNet:     ipNet,
+		AccountID:    account,
+		Region:       region,
+		Proto:        proto,
+		Addr:         addr,
+		Workdir:      workdir,
+		functions:    map[string]*function{},
+		logger:       logger,
+		ipPool:       ipPool,
+		ipNet:        ipNet,
+		bridgeIfName: bridgeIfName,
+		gatewayIP:    gatewayIP,
+		nameServerIP: nameServerIP,
 	}, nil
 }
 
@@ -225,6 +232,9 @@ func (l *LLambda) createFunction(req Request) {
 		version:           "$LATEST",
 		idleInstances:     list.New(),
 		containerManager:  &cmanager{workdir: fFolder},
+		bridgeIfName:      l.bridgeIfName,
+		gatewayIP:         l.gatewayIP,
+		nameServerIP:      l.nameServerIP,
 		logger:            l.logger,
 	}
 

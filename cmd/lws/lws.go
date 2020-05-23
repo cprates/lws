@@ -52,6 +52,9 @@ func main() {
 	addr := net.JoinHostPort(os.Getenv("LWS_IP"), os.Getenv("LWS_PORT"))
 	lambdaFolder := os.Getenv("LWS_LAMBDA_WORKDIR")
 	network := os.Getenv("LWS_DOCKER_SUBNET")
+	bridgeIfName := os.Getenv("LWS_IF_BRIDGE")
+	gatewayIP := os.Getenv("LWS_IP")
+	nameServerIP := os.Getenv("LWS_NAMESERVER")
 
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -79,8 +82,8 @@ func main() {
 	stopC := make(chan struct{})
 	wg.Add(1)
 	_, err = awsAPI.InstallLambda(
-		s.router, region, account, proto, addr, network, lambdaWorkdir,
-		stopC, &wg, log.NewEntry(log.StandardLogger()),
+		s.router, region, account, proto, addr, network, bridgeIfName, gatewayIP, nameServerIP,
+		lambdaWorkdir, stopC, &wg, log.NewEntry(log.StandardLogger()),
 	)
 	if err != nil {
 		log.Errorln(err)

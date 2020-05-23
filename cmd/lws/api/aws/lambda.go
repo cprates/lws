@@ -24,7 +24,7 @@ type LambdaAPI struct {
 // InstallLambda starts a new instance of LLambda.
 func (i Interface) InstallLambda(
 	router *mux.Router,
-	region, accountID, scheme, host, network, lambdaWorkdir string,
+	region, accountID, scheme, host, network, gatewayIP, bridgeIfName, nameServerIP, lambdaWorkdir string,
 	stopC <-chan struct{},
 	shutdown *sync.WaitGroup,
 	logger *log.Entry,
@@ -32,12 +32,12 @@ func (i Interface) InstallLambda(
 	pushC chan llambda.Request,
 	err error,
 ) {
-
 	log.Println("Installing Lambda service")
 
 	// TODO: same structure as LSQS
 	instance, err := llambda.New(
-		accountID, region, scheme, host, network, lambdaWorkdir, logger,
+		accountID, region, scheme, host, network, gatewayIP, bridgeIfName, nameServerIP,
+		lambdaWorkdir, logger,
 	)
 	if err != nil {
 		return

@@ -36,7 +36,6 @@ type funcInstance struct {
 	container    containerWrapper
 }
 
-// TODO: vale a pena criar uma interface para isto?
 type function struct {
 	folder            string
 	runtimeImage      string // folder/to/image/runtime.ext
@@ -55,6 +54,9 @@ type function struct {
 	version           string
 	idleInstances     *list.List
 	containerManager  containerManager
+	bridgeIfName      string
+	gatewayIP         string
+	nameServerIP      string
 	logger            *log.Entry
 }
 
@@ -219,9 +221,9 @@ func (f *function) Instance(
 		},
 		netconfFlags{
 			IP:            ip.String() + "/" + strconv.Itoa(mask),
-			Bridge:        os.Getenv("LWS_IF_BRIDGE"), // TODO: move this to a general config struct
-			Gateway:       os.Getenv("LWS_IP"),
-			NameServer:    os.Getenv("LWS_NAMESERVER"),
+			Bridge:        f.bridgeIfName,
+			Gateway:       f.gatewayIP,
+			NameServer:    f.nameServerIP,
 			IFaceName:     id + "_0",
 			PeerIFaceName: id + "_1",
 		},
