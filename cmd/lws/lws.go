@@ -43,6 +43,7 @@ func init() {
 }
 
 func main() {
+	runtime.GOMAXPROCS(runtime.NumCPU() + 2)
 
 	log.Println("Starting LWS...")
 

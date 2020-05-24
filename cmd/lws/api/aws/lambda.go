@@ -44,13 +44,13 @@ func (i Interface) InstallLambda(
 	}
 	pushC = make(chan llambda.Request)
 	go func() {
-		instance.Process(pushC, stopC)
+		instance.Process(stopC)
 		shutdown.Done()
 	}()
 
 	api := &LambdaAPI{
 		instance: instance,
-		pushC:    pushC,
+		pushC:    instance.PushC,
 		stopC:    stopC,
 	}
 	root := "/2015-03-31/functions"

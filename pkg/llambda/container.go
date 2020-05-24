@@ -100,7 +100,9 @@ func (c *cmanager) Create(
 	}()
 
 	select {
-	case <-time.After(100 * time.Millisecond):
+	// TODO: at this point creating lambdas in bulk can take some time due to the bottleneck created
+	//  by the current FS (or lack of it...)
+	case <-time.After(2000 * time.Millisecond):
 		return nil, errors.New("timeout creating container")
 	case err = <-wC:
 		if err != nil {
@@ -130,7 +132,7 @@ func (c *cmanager) Create(
 	}()
 
 	select {
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(500 * time.Millisecond):
 		return nil, errors.New("timeout starting container")
 	case err = <-wC:
 		if err != nil {

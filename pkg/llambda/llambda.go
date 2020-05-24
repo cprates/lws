@@ -21,7 +21,7 @@ import (
 
 // LLambdaer is the interface to implement if you want to implement your own Lambda service.
 type LLambdaer interface {
-	Process(<-chan Request, <-chan struct{})
+	Process(<-chan struct{})
 }
 
 // LLambda represents an instance of lLambda core.
@@ -40,6 +40,8 @@ type LLambda struct {
 	bridgeIfName    string
 	gatewayIP       string
 	nameServerIP    string
+
+	PushC chan Request
 }
 
 // LambdaArgs sent to the lambda application. Must be synchronized with the
@@ -49,6 +51,11 @@ type LambdaArgs struct {
 	RequestId    string
 	Body         []byte
 	Arn          string
+}
+
+type reqSetIdle struct {
+	functionName string
+	instance     funcInstancer
 }
 
 var (
@@ -108,22 +115,25 @@ func New(
 		bridgeIfName: bridgeIfName,
 		gatewayIP:    gatewayIP,
 		nameServerIP: nameServerIP,
+		PushC:        make(chan Request),
 	}, nil
 }
 
 // Process requests from the API.
-func (l *LLambda) Process(reqC <-chan Request, stopC <-chan struct{}) {
+func (l *LLambda) Process(stopC <-chan struct{}) {
 	lifecycleTick := time.NewTicker(time.Second)
 
 forloop:
 	for {
 		select {
-		case req := <-reqC:
+		case req := <-l.PushC:
 			switch req.action {
 			case "CreateFunction":
 				l.createFunction(req)
 			case "InvokeFunction":
 				l.invokeFunction(req)
+			case "setIdle":
+				l.setIdle(req)
 			default:
 				req.resC <- &ReqResult{Err: fmt.Errorf("%q not implemented", req.action)}
 				break
@@ -302,20 +312,41 @@ func (l *LLambda) invokeFunction(req Request) {
 	// TODO: simulate random delay of a lambda being created/invoked? - should be configurable
 	//time.Sleep(500 * time.Millisecond)
 
-	instanceID := strconv.FormatUint(l.instanceCounter, 10)
-	l.instanceCounter++
-
 	var fInstance funcInstancer
+	var newInstanceID string
+
+	elem := function.idleInstances.PullFront()
+	if elem == nil {
+		newInstanceID = strconv.FormatUint(l.instanceCounter, 10)
+		l.instanceCounter++
+	} else {
+		fInstance = elem.(funcInstancer)
+	}
+
+	// lengthy operations go in a separate goroutine
+	go func() {
+		req.resC <- l.parallelInvoke(function, fInstance, newInstanceID, req.id, params.Payload)
+	}()
+}
+
+// parallelInvoke holds all the invocation code that is safe to run concurrently.
+func (l *LLambda) parallelInvoke(
+	f *function, fInstance funcInstancer, instanceID, reqID string, payload []byte,
+) *ReqResult {
 	var err error
 	// if no idle instances available, create a new one if the limit wasn't reached
-	switch elem := function.idleInstances.PullFront(); elem {
-	case nil:
-		log.Debugln("No instances available, creating....")
+	if fInstance == nil {
 		// TODO: when it supports configuring max concurrency on a function, this must be
-		//  aware of it
+		//  aware of it. This control needs to be done thread safe
+		log.Debugln("No instances available, creating new....")
 
 		ip := l.ipPool.IPv4()
-		fInstance, err = function.Instance(
+		if ip == nil {
+			err = fmt.Errorf("unable to acquire IP for lambda %s[%s]: %s", f.name, instanceID, err)
+			return &ReqResult{Err: err}
+		}
+
+		fInstance, err = f.Instance(
 			instanceID,
 			ip,
 			l.ipNet,
@@ -326,53 +357,59 @@ func (l *LLambda) invokeFunction(req Request) {
 			runtimeListenPort,
 		)
 		if err != nil {
-			req.resC <- &ReqResult{Err: err}
-			return
+			err = fmt.Errorf("creating new lambda %s[%s]: %s", f.name, instanceID, err)
+			// free ip on error
+			l.ipPool.Release4(ip)
+			return &ReqResult{Err: err}
 		}
-	default:
-		fInstance = elem.(funcInstancer)
 	}
 
-	defer func() {
-		if err != nil {
-			return
-		}
-		log.Debugf("Putting lambda %s instance %s back to idle\n", function.name, fInstance.ID())
-		// put instance back to the idle stack
-		function.idleInstances.PushFront(fInstance)
-	}()
-
-	log.Debugln("Launching instance", fInstance.ID())
+	log.Debugf("Launching lambda instance %s[%s]", f.name, fInstance.ID())
 
 	reply, err := fInstance.Exec(
 		&LambdaArgs{
-			FunctionName: function.name,
-			RequestId:    req.id,
-			Body:         params.Payload,
-			Arn:          function.lrn,
+			FunctionName: f.name,
+			RequestId:    reqID,
+			Body:         payload,
+			Arn:          f.lrn,
 		},
 	)
-
 	if err != nil {
-		e := fInstance.Shutdown()
-		if e != nil {
-			err = fmt.Errorf(
-				"failed to init lambda runtime: %s, AND failed to shutdown lambda %q, instance %q: %s",
-				err, function.name, fInstance.ID(), e,
-			)
+		err = fmt.Errorf("failed to init lambda %s[%s] runtime: %s", f.name, fInstance.ID(), err)
+		if e := fInstance.Shutdown(); e != nil {
+			err = fmt.Errorf("%s, AND failed to shut it down: %s", err, e)
 		}
 
-		// free ip
+		// free ip on error
 		l.ipPool.Release4(fInstance.IP())
 
-		req.resC <- &ReqResult{Err: err}
-		return
+		return &ReqResult{Err: err}
 	}
 
-	req.resC <- &ReqResult{
-		Data: map[string]string{
-			"result":  string(reply.Payload),
-			"version": function.version,
+	log.Debugf("Putting lambda %s[%s] back to idle\n", f.name, fInstance.ID())
+	// put instance back to the idle stack
+	l.PushC <- Request{
+		action: "setIdle",
+		params: reqSetIdle{
+			functionName: f.name,
+			instance:     fInstance,
 		},
 	}
+
+	return &ReqResult{
+		Data: map[string]string{
+			"result":  string(reply.Payload),
+			"version": f.version,
+		},
+	}
+}
+
+func (l *LLambda) setIdle(req Request) {
+	params := req.params.(reqSetIdle)
+
+	function, exist := l.functions[params.functionName]
+	if !exist {
+		panic("function must exist")
+	}
+	function.idleInstances.PushFront(params.instance)
 }
