@@ -5,4 +5,5 @@ WORKDIR /lws
 COPY go.mod .
 
 RUN go mod download \
+    && CGO_ENABLED=0 GOOS=linux GOBIN=/tmp go install github.com/cprates/box/cmd/box \
     && go get -u golang.org/x/lint/golint

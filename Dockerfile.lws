@@ -5,7 +5,6 @@ WORKDIR /lws
 COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo ./cmd/lws
-RUN CGO_ENABLED=0 GOOS=linux GOBIN=/tmp go install github.com/cprates/box/cmd/box
 
 
 FROM alpine:3.10
