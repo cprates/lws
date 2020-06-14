@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"os"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -333,7 +332,6 @@ func (l *LLambda) invokeFunction(req Request) {
 func (l *LLambda) parallelInvoke(
 	f *function, fInstance funcInstancer, instanceID, reqID string, payload []byte,
 ) *ReqResult {
-	var err error
 	// if no idle instances available, create a new one if the limit wasn't reached
 	if fInstance == nil {
 		// TODO: when it supports configuring max concurrency on a function, this must be
@@ -342,7 +340,13 @@ func (l *LLambda) parallelInvoke(
 
 		ip := l.ipPool.IPv4()
 		if ip == nil {
-			err = fmt.Errorf("unable to acquire IP for lambda %s[%s]: %s", f.name, instanceID, err)
+			err := fmt.Errorf("unable to acquire IP for lambda %s[%s]", f.name, instanceID)
+			return &ReqResult{Err: err}
+		}
+
+		ioFiles, err := prepareIOFiles(f.name, instanceID)
+		if err != nil {
+			err = fmt.Errorf("preparing io files for %s[%s]: %s", f.name, instanceID, err)
 			return &ReqResult{Err: err}
 		}
 
@@ -350,10 +354,9 @@ func (l *LLambda) parallelInvoke(
 			instanceID,
 			ip,
 			l.ipNet,
-			// TODO: pass std io properly
-			os.Stdin,
-			os.Stdout,
-			os.Stderr,
+			ioFiles.Stdin,
+			ioFiles.Stdout,
+			ioFiles.Stderr,
 			runtimeListenPort,
 		)
 		if err != nil {
