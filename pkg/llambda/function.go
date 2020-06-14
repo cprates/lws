@@ -232,6 +232,7 @@ func (f *function) Instance(
 		stderr,
 	)
 	if err != nil {
+		_ = f.deleteInstanceFS(id)
 		return nil, fmt.Errorf("creating container: %s", err)
 	}
 
@@ -244,6 +245,7 @@ func (f *function) Instance(
 	}, nil
 }
 
+// TODO: this must go away when a proper FS is added
 func (f *function) prepareInstanceFS(id string) (string, error) {
 	dstFolder := filepath.Join(f.folder, id, "fs")
 	if _, e := os.Stat(dstFolder); !os.IsNotExist(e) {
@@ -257,7 +259,6 @@ func (f *function) prepareInstanceFS(id string) (string, error) {
 
 	// --same-owner is added by default when running as root but, lets make it explicit.
 	// On a container this runs as root
-	// TODO: use a lib instead of tar cmd
 	extractCmd := exec.Command(
 		"tar",
 		"-xpf", f.runtimeImage,
@@ -274,10 +275,16 @@ func (f *function) prepareInstanceFS(id string) (string, error) {
 	// TODO: use a lib instead of unzip cmd
 	extractCmd = exec.Command("unzip", "-q", f.usercodeFile, "-d", appFolder)
 	if err := extractCmd.Run(); err != nil {
+		_ = f.deleteInstanceFS(id)
 		return "", fmt.Errorf("while extracting code %q to %s: %s", f.usercodeFile, appFolder, err)
 	}
 
 	return dstFolder, nil
+}
+
+// TODO: this must go away when a proper FS is added
+func (f *function) deleteInstanceFS(id string) error {
+	return os.RemoveAll(filepath.Join(f.folder, id))
 }
 
 func (f *funcInstance) Exec(arg interface{}) (reply *messages.InvokeResponse, err error) {
