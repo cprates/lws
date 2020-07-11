@@ -62,3 +62,40 @@ Read the message
 ```
 aws sqs receive-message --endpoint-url http://localhost:8080 --queue-url "$QueueURL"
 ```
+
+## Testing Lambda
+Build and package the sample lambda function
+```
+go build cmd/sample-lambda/main.go && zip main.zip main && rm main
+```
+
+Create a new Lambda function
+```
+aws lambda create-function \
+    --function-name MyFunc1 \
+    --runtime go1.x \
+    --role dummy-role \
+    --handler main \
+    --zip-file fileb://main.zip \
+    --endpoint-url http://localhost:8080 \
+    --environment '{"Variables":{"MyEnvVar":"value1"}}'
+```
+
+Invoke the new function
+```
+aws lambda invoke \
+    --endpoint-url http://localhost:8080 \
+    --function-name MyFunc1 \
+    --payload '{"value":"Running a test"}' \
+    --log-type None result.log 
+```
+
+Check the logs
+```
+cat logs/lambda/MyFunc1/0/stdout
+```
+
+Check the return
+```
+cat result.log
+```
