@@ -76,9 +76,9 @@ func (s *Server) Exec(args *llambda.LambdaArgs, reply *messages.InvokeResponse) 
 		// ShouldExit is set at Function.Invoke when the function panics, but don't know what it does...
 		//   May be this has something to do with the InvokeOutput.Function error Handled and UnHandled.
 		//   invoke a function that panics and check the results. Could be used to shutdown the lambda
-		//    container because it panic
-		// StackTrace is for panics as well
-		fmt.Printf("res: %+v\n", *reply.Error)
+		//   container because it panics
+		// StackTrace holds the stack trace when the function panics
+		fmt.Printf("Function returned error: %+v\n", *reply.Error)
 	}
 
 	return

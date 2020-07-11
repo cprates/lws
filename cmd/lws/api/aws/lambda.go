@@ -305,15 +305,20 @@ func invokeFunction(api *LambdaAPI) http.HandlerFunc {
 
 		res := lambdaRes.Data.(map[string]string)
 
-		//w.Header().Set("X-Amz-Function-Error", "Unhandled")
+		resPayload := []byte(res["result"])
+		if resErr, ok := res["error"]; ok {
+			w.Header().Set("X-Amz-Function-Error", "Unhandled")
+			resPayload = []byte(resErr)
+		}
+
 		if logType == "Tail" { // TODO: and no error...
-			//w.Header().Set("X-Amz-Log-Result", string(buf)) // TODO: only the result
+			//w.Header().Set("X-Amz-Log-Result", string(buf))
 		}
 
 		w.Header().Set("X-Amz-Executed-Version", res["version"])
 		w.WriteHeader(200)
 
-		_, err = w.Write([]byte(res["result"]))
+		_, err = w.Write(resPayload)
 		if err != nil {
 			log.Errorln("Unexpected error, request", reqID, err)
 		}

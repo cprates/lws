@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -399,11 +400,22 @@ func (l *LLambda) parallelInvoke(
 		},
 	}
 
+	resData := map[string]string{
+		"result":  string(reply.Payload),
+		"version": f.version,
+	}
+
+	if reply.Error != nil {
+		b, err := json.Marshal(reply.Error)
+		if err != nil {
+			log.Errorln("Failed to marshal function error:", err)
+			b = []byte("this is not a function error, check LWS logs for details")
+		}
+		resData["error"] = string(b)
+	}
+
 	return &ReqResult{
-		Data: map[string]string{
-			"result":  string(reply.Payload),
-			"version": f.version,
-		},
+		Data: resData,
 	}
 }
 

@@ -25,7 +25,10 @@ func HandleRequest(ctx context.Context, evt MyEvent) (string, error) {
 	}
 
 	body, err := ioutil.ReadAll(resp.Body)
-	_ = resp.Body.Close()
+	defer resp.Body.Close()
+	if err != nil {
+		return "error!", err
+	}
 
 	log.Printf("Page source:\n%s", string(body))
 
