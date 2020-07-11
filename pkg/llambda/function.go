@@ -25,6 +25,7 @@ type funcInstancer interface {
 	Shutdown() (err error)
 	ID() string
 	LifeDeadline() time.Time
+	SetLifeDeadline(t time.Time)
 	IP() net.IP
 }
 
@@ -58,6 +59,7 @@ type function struct {
 	gatewayIP         string
 	nameServerIP      string
 	logger            *log.Entry
+	deleted           bool // set to true when the function gets marked to deletion
 }
 
 var (
@@ -287,6 +289,10 @@ func (f *function) deleteInstanceFS(id string) error {
 	return os.RemoveAll(filepath.Join(f.folder, id))
 }
 
+func (f *function) deleteFunctionStorage() error {
+	return os.RemoveAll(f.folder)
+}
+
 func (f *funcInstance) Exec(arg interface{}) (reply *messages.InvokeResponse, err error) {
 	logger := f.parent.logger
 
@@ -377,6 +383,10 @@ func (f *funcInstance) ID() string {
 
 func (f *funcInstance) LifeDeadline() time.Time {
 	return f.lifeDeadline
+}
+
+func (f *funcInstance) SetLifeDeadline(t time.Time) {
+	f.lifeDeadline = t
 }
 
 func (f *funcInstance) IP() net.IP {

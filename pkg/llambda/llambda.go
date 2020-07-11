@@ -34,6 +34,7 @@ type LLambda struct {
 
 	functions       map[string]*function // by function name
 	instanceCounter uint64               // used as lambda instance ids
+	liveInstances   uint64               // number of running+idle instances
 	logger          *log.Entry
 	ipPool          *ippool.Dhcpc
 	ipNet           *net.IPNet
@@ -132,6 +133,8 @@ forloop:
 				l.createFunction(req)
 			case "InvokeFunction":
 				l.invokeFunction(req)
+			case "DeleteFunction":
+				l.deleteFunction(req)
 			case "setIdle":
 				l.setIdle(req)
 			default:
@@ -179,7 +182,21 @@ func (l *LLambda) handleLifecycle() {
 			// free ip
 			l.ipPool.Release4(inst.IP())
 
+			l.liveInstances--
+
 			toRemove = append(toRemove, elem)
+
+			// if this is the last live instance and the function is marked for deletion,
+			// delete the function
+			if function.deleted && l.liveInstances == 0 {
+				log.Debugf("Deleting lambda %q after all instances are gone", function.name)
+				if err = l.deleteFunctionInternal(function); err != nil {
+					log.Errorf(
+						"Failed to delete storage for lambda %q, instance %q: %s",
+						function.name, inst.ID(), err,
+					)
+				}
+			}
 		}
 
 		for _, elem := range toRemove {
@@ -319,6 +336,7 @@ func (l *LLambda) invokeFunction(req Request) {
 	if elem == nil {
 		newInstanceID = strconv.FormatUint(l.instanceCounter, 10)
 		l.instanceCounter++
+		l.liveInstances++
 	} else {
 		fInstance = elem.(funcInstancer)
 	}
@@ -419,6 +437,50 @@ func (l *LLambda) parallelInvoke(
 	}
 }
 
+// The function is marked as being deleted and will wait for all instances to get destroyed
+// by the normal process, including idle instances, which means that after being marked deleted
+// it can take up to 'timeout'. After a function is marked as being deleted no more requests
+// for that function are accepted.
+func (l *LLambda) deleteFunction(req Request) {
+	params := req.params.(ReqDeleteFunction)
+
+	function, exist := l.functions[params.FunctionName]
+	if !exist || function.deleted {
+		req.resC <- &ReqResult{
+			Err:     ErrFunctionNotFound,
+			ErrData: params.FunctionName,
+		}
+		return
+	}
+
+	// if no live instances, delete the lambda immediately
+	if l.liveInstances == 0 {
+		if err := l.deleteFunctionInternal(function); err != nil {
+			req.resC <- &ReqResult{
+				Err:     err,
+				ErrData: "failed to delete lambda's storage",
+			}
+			return
+		}
+
+		req.resC <- &ReqResult{}
+		return
+	}
+
+	// mark the function for deletion
+	function.deleted = true
+
+	req.resC <- &ReqResult{}
+}
+
+func (l *LLambda) deleteFunctionInternal(f *function) error {
+	if err := f.deleteFunctionStorage(); err != nil {
+		return err
+	}
+	delete(l.functions, f.name)
+	return nil
+}
+
 func (l *LLambda) setIdle(req Request) {
 	params := req.params.(reqSetIdle)
 
@@ -426,5 +488,12 @@ func (l *LLambda) setIdle(req Request) {
 	if !exist {
 		panic("function must exist")
 	}
+
+	// if a function is marked for deletion set its deadline in the past to
+	// accelerate the deletion process
+	if function.deleted {
+		params.instance.SetLifeDeadline(time.Time{})
+	}
+
 	function.idleInstances.PushFront(params.instance)
 }

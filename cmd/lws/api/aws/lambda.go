@@ -58,6 +58,10 @@ func (i Interface) InstallLambda(
 		root+"/{FunctionName}/invocations",
 		invokeFunction(api),
 	).Methods(http.MethodPost)
+	router.HandleFunc(
+		root+"/{FunctionName}",
+		deleteFunction(api),
+	).Methods(http.MethodDelete)
 
 	return
 }
@@ -322,6 +326,65 @@ func invokeFunction(api *LambdaAPI) http.HandlerFunc {
 		if err != nil {
 			log.Errorln("Unexpected error, request", reqID, err)
 		}
+	}
+}
+
+func deleteFunction(api *LambdaAPI) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Content-Type", "application/json")
+
+		u, err := uuid.NewRandom()
+		if err != nil {
+			onLambdaInternalError(err.Error(), w)
+			log.Debugln("Unexpected error", err)
+			return
+		}
+		reqID := u.String()
+
+		log.Debugf("Req %s %q, %s", r.Method, r.RequestURI, reqID)
+
+		nameParam, exists := mux.Vars(r)["FunctionName"]
+		if !exists {
+			onLambdaInvalidParameterValue("FunctionName is a required parameter", w)
+			return
+		}
+
+		functionName := parseFuncName(nameParam)
+		if functionName == "" {
+			onLambdaInvalidParameterValue("invalid FunctionName: "+nameParam, w)
+			return
+		}
+
+		query, _ := flattAndParse(r.URL.Query())
+
+		qualifier, present := query["Qualifier"]
+		// TODO: need better check, pattern: (|[a-zA-Z0-9$_-]+)
+		if present && (len(qualifier) < 1 || len(qualifier) > 128) {
+			onLambdaInvalidParameterValue("Qualifier must be between 1 and 128 characters", w)
+			return
+		}
+
+		params := llambda.ReqDeleteFunction{
+			FunctionName: functionName,
+			Qualifier:    qualifier,
+		}
+
+		log.Debugf("Deleting function %s, %s", params.FunctionName, reqID)
+
+		lambdaRes := llambda.PushReq(api.pushC, "DeleteFunction", reqID, params)
+		if lambdaRes.Err != nil {
+			log.Errorln(reqID, lambdaRes.Err, lambdaRes.ErrData)
+
+			switch lambdaRes.Err {
+			case llambda.ErrFunctionNotFound:
+				onLambdaNotFound(lambdaRes.ErrData.(string), w)
+			default:
+				onLambdaInternalError(lambdaRes.Err.Error(), w)
+			}
+			return
+		}
+
+		w.WriteHeader(204)
 	}
 }
 

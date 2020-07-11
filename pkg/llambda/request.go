@@ -46,6 +46,12 @@ type ReqInvokeFunction struct {
 	Payload        []byte
 }
 
+// ReqDeleteFunction is for delete a function.
+type ReqDeleteFunction struct {
+	FunctionName string
+	Qualifier    string
+}
+
 // NewReq returns a new Request to interact with the LLambda Processor.
 func NewReq(action, reqID string, params interface{}) Request {
 	return Request{
