@@ -34,7 +34,6 @@ func (i Interface) InstallLambda(
 ) {
 	log.Println("Installing Lambda service")
 
-	// TODO: same structure as LSQS
 	instance, err := llambda.New(
 		accountID, region, scheme, host, network, gatewayIP, bridgeIfName, nameServerIP,
 		lambdaWorkdir, logger,

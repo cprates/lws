@@ -33,47 +33,57 @@ func prepareIOFiles(fName, instanceID string) (*stdIOFiles, error) {
 	}
 
 	// base folder
-	basePath := path.Join("/var/log/lambda", fName)
+	basePath := "/var/log/lambda"
 	err := os.MkdirAll(basePath, 0766)
 	if err != nil {
-		return nil, fmt.Errorf("creating logs base folder for %s[%s]: %s", fName, instanceID, err)
+		return nil, fmt.Errorf("creating logs base folder: %s", err)
 	}
 	err = os.Chown(basePath, uid, gid)
 	if err != nil {
-		return nil, fmt.Errorf("chown logs base folder for %s[%s]: %s", fName, instanceID, err)
+		return nil, fmt.Errorf("chown logs base folder: %s", err)
 	}
 
 	// instance folder
-	logPath := path.Join(basePath, instanceID)
-	err = os.MkdirAll(logPath, 0766)
+	functionLogPath := path.Join(basePath, fName)
+	err = os.MkdirAll(functionLogPath, 0766)
 	if err != nil {
-		return nil, fmt.Errorf("creating logs folder for %s[%s]: %s", fName, instanceID, err)
+		return nil, fmt.Errorf("creating function log folder: %s", err)
 	}
-	err = os.Chown(logPath, uid, gid)
+	err = os.Chown(functionLogPath, uid, gid)
 	if err != nil {
-		return nil, fmt.Errorf("chown logs folder for %s[%s]: %s", fName, instanceID, err)
+		return nil, fmt.Errorf("chown function log folder: %s", err)
+	}
+
+	instanceLogPath := path.Join(functionLogPath, instanceID)
+	err = os.MkdirAll(instanceLogPath, 0766)
+	if err != nil {
+		return nil, fmt.Errorf("creating instance log folder: %s", err)
+	}
+	err = os.Chown(instanceLogPath, uid, gid)
+	if err != nil {
+		return nil, fmt.Errorf("chown instance log folder: %s", err)
 	}
 
 	// files
 	flags := os.O_CREATE | os.O_WRONLY | os.O_APPEND
-	filePath := path.Join(logPath, "stdout")
+	filePath := path.Join(instanceLogPath, "stdout")
 	stdout, err := os.OpenFile(filePath, flags, 0664)
 	if err != nil {
-		return nil, fmt.Errorf("creating stdout file for %s[%s]: %s", fName, instanceID, err)
+		return nil, fmt.Errorf("creating stdout file: %s", err)
 	}
 	err = os.Chown(filePath, uid, gid)
 	if err != nil {
-		return nil, fmt.Errorf("chown stdout file for %s[%s]: %s", fName, instanceID, err)
+		return nil, fmt.Errorf("chown stdout file: %s", err)
 	}
 
-	filePath = path.Join(logPath, "stderr")
+	filePath = path.Join(instanceLogPath, "stderr")
 	stderr, err := os.OpenFile(filePath, flags, 0664)
 	if err != nil {
-		return nil, fmt.Errorf("creating stderr file for %s[%s]: %s", fName, instanceID, err)
+		return nil, fmt.Errorf("creating stderr file: %s", err)
 	}
 	err = os.Chown(filePath, uid, gid)
 	if err != nil {
-		return nil, fmt.Errorf("chown stderr file for %s[%s]: %s", fName, instanceID, err)
+		return nil, fmt.Errorf("chown stderr file: %s", err)
 	}
 
 	// TODO: until a 'console' dev is not supported, pass stdin file to make it
