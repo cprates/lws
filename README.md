@@ -19,8 +19,15 @@ download and install Golang. Make sure you have configured your [GOPATH](https:/
 For a list of supported features check the [Wiki](https://github.com/cprates/lws/wiki/LSQS).
 
 ## Lambda
-Lambda service is in early development stage. If you are keen and want to follow the development,
-check out the branch ```llambda```.
+For a list of supported features check the [Wiki](https://github.com/cprates/lws/wiki/LLambda).
+
+### Logs
+Lambda's log files are stored in ```{your-lws-folder}/logs/lambda``` by default. Change it by setting
+```$LWS_LOGS_FOLDER``` to a different folder.
+
+Log files are owned by the user that started LWS. Set ```USER_UID``` and ```GROUP_UID``` to change the 
+ownership of the log files.
+
 
 ## Installation
 After installing Golang and configuring your GOPATH clone the *LWS* repository:
@@ -28,14 +35,14 @@ After installing Golang and configuring your GOPATH clone the *LWS* repository:
 git clone https://github.com/cprates/lws.git
 ```
 
-## Running
+## Run LWS
 ```
 > cd lws
 > make install
 > make run
 ```
 
-## Testing your installation
+## Testing SQS
 Create a new queue
 ```
 aws sqs create-queue --endpoint-url http://localhost:8080 --queue-name queue1
