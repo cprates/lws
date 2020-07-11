@@ -14,10 +14,10 @@ type stdIOFiles struct {
 }
 
 // this is a hack to store logs with the right uid/gid on the host when the log folder is bind
-// to a host's folder. If no HOST_UID or HOST_GID is provided, defaults to 0.
+// to a host's folder. If no USER_UID or HOST_GID is provided, defaults to 0.
 func prepareIOFiles(fName, instanceID string) (*stdIOFiles, error) {
 	uid := 0
-	if id := os.Getenv("HOST_UID"); id != "" {
+	if id := os.Getenv("USER_UID"); id != "" {
 		i, err := strconv.Atoi(id)
 		if err == nil {
 			uid = i
@@ -33,7 +33,7 @@ func prepareIOFiles(fName, instanceID string) (*stdIOFiles, error) {
 	}
 
 	// base folder
-	basePath := "/var/log/lambda"
+	basePath := path.Join("/var/log/lambda", fName)
 	err := os.MkdirAll(basePath, 0766)
 	if err != nil {
 		return nil, fmt.Errorf("creating logs base folder for %s[%s]: %s", fName, instanceID, err)

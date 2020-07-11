@@ -5,7 +5,7 @@ export LWS_ACCOUNT_ID ?= 0000000000
 export LWS_PROTO ?= http
 # if changed, for now the makefile and Docker files must be updated as well
 export LWS_LAMBDA_WORKDIR ?= repo
-LWS_LAMBDA_LOGS_FOLDER ?= "$(shell pwd)"/logs
+LWS_LOGS_FOLDER ?= "$(shell pwd)"/logs
 
 # network
 # is used by lambdas as gateway
@@ -74,7 +74,7 @@ install_runbox:
 
 run:
 	# use docker compose instead?
-	mkdir -p $(LWS_LAMBDA_LOGS_FOLDER) && \
+	mkdir -p $(LWS_LOGS_FOLDER) && \
 	docker run --privileged \
 		--env LWS_DEBUG=$(LWS_DEBUG) \
 		--env LWS_ACCOUNT_ID=$(LWS_ACCOUNT_ID) \
@@ -89,9 +89,9 @@ run:
 		--env LWS_NAMESERVER=$(LWS_NAMESERVER) \
 		--env LWS_IF_HOST=$(LWS_IF_HOST) \
 		--env LWS_WORK_DIR=$(LWS_WORK_DIR) \
-		--env HOST_UID=$(shell id -u) \
+		--env USER_UID=$(shell id -u) \
 		--env GROUP_UID=$(shell id -g) \
 		-p $(LWS_PORT):$(LWS_PORT) \
 		--net lwsnetwork \
-		--mount src=$(LWS_LAMBDA_LOGS_FOLDER),target=/var/log,type=bind \
+		--mount src=$(LWS_LOGS_FOLDER),target=/var/log,type=bind \
 		cprates/lws:latest
