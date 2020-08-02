@@ -24,17 +24,21 @@ type Server struct {
 	listener net.Listener
 }
 
+func execCmd() (string, []string) {
+	switch os.Getenv("LWS_DEBUG") {
+	case "1":
+		addr := ":" + os.Getenv("LWS_DEBUG_LAMBDA_PORT")
+		return "dlv", []string{
+			"--listen=" + addr, "--headless=true", "--api-version=2", "exec",
+			"--accept-multiclient", "--continue", os.Getenv("HANDLER"),
+		}
+	default:
+		return os.Getenv("HANDLER"), nil
+	}
+}
+
 // Exec executes the lambda.
 func (s *Server) Exec(args *llambda.LambdaArgs, reply *messages.InvokeResponse) (err error) {
-	fmt.Println("Env vars:", os.Environ())
-	fmt.Println("Agent PID:", os.Getpid())
-	fmt.Print("Agent CWD: ")
-	fmt.Println(os.Getwd())
-	fmt.Print("Agent Hostname: ")
-	fmt.Println(os.Hostname())
-
-	lambdaArgs := args
-
 	// executes our lambda
 	conn, err := net.DialTimeout("tcp", lambdaAddr, 2*time.Millisecond)
 	if err != nil {
@@ -50,23 +54,30 @@ func (s *Server) Exec(args *llambda.LambdaArgs, reply *messages.InvokeResponse) 
 	c := rpc.NewClient(conn)
 
 	req := messages.InvokeRequest{
-		Payload:   lambdaArgs.Body,
-		RequestId: lambdaArgs.RequestId,
+		Payload:   args.Body,
+		RequestId: args.RequestId,
 		// XAmznTraceId          string
 		Deadline: messages.InvokeRequest_Timestamp{ // TODO
 			Seconds: 5,
 			Nanos:   56,
 		},
-		InvokedFunctionArn: lambdaArgs.Arn,
+		InvokedFunctionArn: args.Arn,
 		// CognitoIdentityId     string
 		// CognitoIdentityPoolId string
 		// TODO: check lambdacontext.LambdaContext and its exported vars set based on env vars
-		// ClientContext: []byte("sdfsdfsdsgdfg"),
+		// ClientContext: []byte("some_context"),
 	}
 
 	err = c.Call("Function.Invoke", &req, reply)
 	if err != nil {
-		// TODO: still need to be tested when the process is finished end to end
+		// TODO: still need to be tested when the process is finished end to end.
+		//  When this happens, the request still succeeds but without any returned payload,
+		//  instead it should fail...
+		//
+		//  In this example the lambda closed unexpectedly:
+		//  Err2: unexpected EOF
+		//  Err2: &{[] <nil>}
+
 		fmt.Println("Err2:", err)
 		fmt.Println("Err2:", reply)
 		return
@@ -103,13 +114,15 @@ func runLambda() (err error) {
 		return
 	}
 
-	cmd := exec.Command(os.Getenv("HANDLER"))
+	name, args := execCmd()
+	cmd := exec.Command(name, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
 	go func() {
-		e := cmd.Run()
-		fmt.Println("Lambda execution returned an error:", e)
+		if err := cmd.Run(); err != nil {
+			fmt.Println("Lambda execution returned an error:", err)
+		}
 	}()
 
 	return
@@ -122,16 +135,16 @@ func lambdaReady() bool {
 		// this is a local connection without DNS resolution so it should be fast. The testes
 		// revealed to take an average of ~300 microseconds. But because this may vary depending
 		// on the hardware it is running, let's make it a bit more robust with 2ms
-		conn, err := net.DialTimeout("tcp", lambdaAddr, 2*time.Millisecond)
+		conn, err := net.DialTimeout("tcp", lambdaAddr, 500*time.Millisecond)
 		if err != nil {
 			e, ok := err.(*net.OpError)
 
 			if ok && e.Op == "dial" {
-				fmt.Printf("Failed to check lambda status, attempt %d: %s\n", i+1, err)
+				fmt.Printf("Lambda not ready yet, attempt %d: %s\n", i+1, err)
 				// try again after a small delay
 				// This value really depends on the machine this is running, so rather have
 				// a delay to make this process more robust with less retries
-				time.Sleep(5 * time.Millisecond)
+				time.Sleep(500 * time.Millisecond)
 				continue
 			}
 			fmt.Println("Failed checking lambda status:", err)
@@ -155,7 +168,10 @@ func main() {
 		return
 	}
 
-	lambdaReady()
+	if ready := lambdaReady(); !ready {
+		fmt.Println("Lambda not ready in time. Shutting down...")
+		return
+	}
 
 	fmt.Println("Starting rpc server at", addr)
 

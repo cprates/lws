@@ -1,6 +1,7 @@
-.DEFAULT_GOAL := docker_dev
+.DEFAULT_GOAL := run
 
-export LWS_DEBUG ?= 1
+export LWS_DEBUG ?= 0
+export LWS_DEBUG_LAMBDA_PORT ?= 40000
 export LWS_ACCOUNT_ID ?= 0000000000
 export LWS_PROTO ?= http
 # if changed, for now the makefile and Docker files must be updated as well
@@ -28,14 +29,14 @@ export CURDIR
 init:
 	docker network create --subnet=$(LWS_DOCKER_SUBNET) lwsnetwork
 
-docker_base:
+base_image:
 	docker build -t cprates/lws_base:latest -f Dockerfile.base .
 
-docker_lws:
+lws_image:
 	docker build --build-arg LWS_LAMBDA_WORKDIR --build-arg CURDIR \
 	 --build-arg LWS_PORT -t cprates/lws:latest -f Dockerfile.lws .
 
-build_gobox:
+gobox_image:
 	docker build -t cprates/gobox:latest -f Dockerfile.gobox . \
 		&& docker container rm lws_gobox || true \
 		&& docker create --name lws_gobox cprates/gobox:latest
@@ -45,11 +46,11 @@ install_gobox:
 		&& mkdir $(LWS_LAMBDA_WORKDIR) 2>/dev/null \
 		&& docker export lws_gobox > $(LWS_LAMBDA_WORKDIR)/golang_base.tar
 
-gobox: build_gobox install_gobox
+gobox: gobox_image install_gobox
 
-docker_dev: gobox docker_lws
+dev: gobox lws_image
 
-docker_all: docker_base gobox docker_lws
+all: base_image gobox lws_image
 
 
 build:
@@ -73,10 +74,11 @@ install_runbox:
 	go install ./cmd/runbox
 
 run:
-	# use docker compose instead?
+	# TODO: use docker compose instead?
 	mkdir -p $(LWS_LOGS_FOLDER) && \
 	docker run --privileged \
 		--env LWS_DEBUG=$(LWS_DEBUG) \
+		--env LWS_DEBUG_LAMBDA_PORT=$(LWS_DEBUG_LAMBDA_PORT) \
 		--env LWS_ACCOUNT_ID=$(LWS_ACCOUNT_ID) \
 		--env LWS_PROTO=$(LWS_PROTO) \
 		--env LWS_LAMBDA_WORKDIR=$(LWS_LAMBDA_WORKDIR) \
@@ -94,4 +96,9 @@ run:
 		-p $(LWS_PORT):$(LWS_PORT) \
 		--net lwsnetwork \
 		--mount src=$(LWS_LOGS_FOLDER),target=/var/log,type=bind \
+		--security-opt="seccomp=unconfined" \
+		--cap-add SYS_PTRACE \
 		cprates/lws:latest
+
+debug: LWS_DEBUG=1
+debug: run

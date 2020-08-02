@@ -9,6 +9,6 @@ require (
 	github.com/google/go-cmp v0.3.0
 	github.com/google/uuid v1.1.1
 	github.com/gorilla/mux v1.7.2
-	github.com/sirupsen/logrus v1.4.2
-	golang.org/x/sys v0.0.0-20190606203320-7fc4e5ec1444 // indirect
+	github.com/sirupsen/logrus v1.6.0
+	golang.org/x/sys v0.0.0-20190626221950-04f50cda93cb // indirect
 )

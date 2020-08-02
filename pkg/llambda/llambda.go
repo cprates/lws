@@ -31,6 +31,7 @@ type LLambda struct {
 	Proto     string
 	Addr      string
 	Workdir   string
+	Debug     string
 
 	functions       map[string]*function // by function name
 	instanceCounter uint64               // used as lambda instance ids
@@ -59,6 +60,9 @@ type reqSetIdle struct {
 	instance     funcInstancer
 }
 
+// DebugPort is used by delve to listen for connections.
+const DebugPort = "40000"
+
 var (
 	ErrFunctionAlreadyExist = errors.New("already exist")
 	// ErrFunctionNotFound is for when the given function does not exist.
@@ -84,7 +88,7 @@ const codeFileName = "code.zip"
 // New returns a ready to use instance of LLambda, addr must be of the form host:port.
 func New(
 	account, region, proto, addr, network, gatewayIP, bridgeIfName, nameServerIP, workdir string,
-	logger *log.Entry,
+	logger *log.Entry, debug string,
 ) (
 	*LLambda, error,
 ) {
@@ -109,6 +113,7 @@ func New(
 		Proto:        proto,
 		Addr:         addr,
 		Workdir:      workdir,
+		Debug:        debug,
 		functions:    map[string]*function{},
 		logger:       logger,
 		ipPool:       ipPool,
@@ -236,6 +241,13 @@ func (l *LLambda) createFunction(req Request) {
 		req.resC <- &ReqResult{Err: err}
 		return
 	}
+
+	// inject debug env var in user's env vars to propagate it to the lambda
+	if params.Environment.Variables == nil {
+		params.Environment.Variables = map[string]string{}
+	}
+	params.Environment.Variables["LWS_DEBUG"] = l.Debug
+	params.Environment.Variables["LWS_DEBUG_LAMBDA_PORT"] = DebugPort
 
 	fFolder := path.Join(l.Workdir, fName)
 	f := function{

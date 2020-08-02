@@ -28,6 +28,7 @@ func (i Interface) InstallLambda(
 	stopC <-chan struct{},
 	shutdown *sync.WaitGroup,
 	logger *log.Entry,
+	debug string,
 ) (
 	pushC chan llambda.Request,
 	err error,
@@ -36,7 +37,7 @@ func (i Interface) InstallLambda(
 
 	instance, err := llambda.New(
 		accountID, region, scheme, host, network, gatewayIP, bridgeIfName, nameServerIP,
-		lambdaWorkdir, logger,
+		lambdaWorkdir, logger, debug,
 	)
 	if err != nil {
 		return

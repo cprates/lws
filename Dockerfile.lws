@@ -4,7 +4,7 @@ WORKDIR /lws
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo ./cmd/lws
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags '-w -s' -a -installsuffix cgo ./cmd/lws
 
 
 FROM alpine:3.10
@@ -16,9 +16,10 @@ ARG LWS_PORT
 RUN apk --no-cache add ca-certificates iproute2
 
 WORKDIR /lws
-COPY --from=builder /tmp/box /lws/lws ./
+COPY --from=builder /go/bin/box /lws/lws ./
 COPY ./scripts/boot.sh ./
 COPY ${LWS_LAMBDA_WORKDIR}/*_base.tar /lws/${LWS_LAMBDA_WORKDIR}/
 
-CMD ["./boot.sh"]
 EXPOSE ${LWS_PORT}
+
+CMD ["./boot.sh"]

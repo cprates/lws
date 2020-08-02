@@ -71,7 +71,7 @@ var _ funcInstancer = (*funcInstance)(nil)
 
 var (
 	runtimeListenPort    = "50127"
-	containerDialTimeout = 50 * time.Millisecond
+	containerDialTimeout = 500 * time.Millisecond
 )
 
 var (
@@ -320,6 +320,8 @@ func (f *funcInstance) Exec(arg interface{}) (reply *messages.InvokeResponse, er
 
 	logger.Debugf("Executing agent on container %s[%s]\n", f.parent.name, f.id)
 	reply = &messages.InvokeResponse{}
+	// TODO: use c.Go() instead to be able to timeout on these calls. Also, add logic to not apply
+	//  any timeout when in debug mode
 	err = c.Call("Server.Exec", arg, reply)
 	if err != nil {
 		err = fmt.Errorf("call to container failed: %s", err)
@@ -368,6 +370,8 @@ func (f *funcInstance) Shutdown() (err error) {
 		}
 	}()
 
+	// TODO: use c.Go() instead to be able to timeout on these calls. Also, add logic to not apply
+	//  any timeout when in debug mode
 	err = c.Call("Server.Shutdown", "", nil)
 	if err != nil {
 		err = fmt.Errorf("rpc call: %s", err)
@@ -405,7 +409,7 @@ func (f *funcInstance) waitReady() (net.Conn, error) {
 			if ok && e.Op == "dial" {
 				logger.Debugf("Failed to check runtime status, attempt %d: %s. Retrying...\n", i+1, err)
 				// try again after a small delay
-				time.Sleep(5 * time.Millisecond)
+				time.Sleep(500 * time.Millisecond)
 				continue
 			}
 			return nil, fmt.Errorf("checking runtime status after %d attempts: %s", i, err)

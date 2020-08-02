@@ -1,9 +1,11 @@
-FROM golang:1.12.7-buster
+FROM golang:1.14-alpine
 
 WORKDIR /lws
 
 COPY go.mod .
 
 RUN go mod download \
-    && CGO_ENABLED=0 GOOS=linux GOBIN=/tmp go install github.com/cprates/box/cmd/box \
-    && go get -u golang.org/x/lint/golint
+    && CGO_ENABLED=0 GOOS=linux go install -ldflags '-w -s' github.com/cprates/box/cmd/box \
+    && go install golang.org/x/lint/golint \
+    && apk add --no-cache git \
+    && go install github.com/go-delve/delve/cmd/dlv

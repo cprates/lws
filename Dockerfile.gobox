@@ -4,7 +4,7 @@ WORKDIR /lws
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo ./cmd/gobox
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags '-w -s' -a -installsuffix cgo ./cmd/gobox
 
 
 FROM alpine:3.10
@@ -26,10 +26,10 @@ RUN set -x \
     && rm "glibc-i18n-$GLIBC_VERSION.apk"
 
 
-# Install gobox
 WORKDIR /
 
-COPY --from=builder /lws/gobox /bin
+COPY --from=builder /lws/gobox /bin/
+COPY --from=builder /go/bin/dlv /bin/
 
 RUN mkdir /app \
     && apk del wget \
